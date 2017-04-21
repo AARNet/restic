@@ -6,6 +6,8 @@ go
 package main
 
 import (
+	"log"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
@@ -19,7 +21,10 @@ func main() {
 		Title: "MINE",
 		Section: "3",
 	}
-	doc.GenManTree(cmd, header, "/tmp")
+	err := doc.GenManTree(cmd, header, "/tmp")
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 
