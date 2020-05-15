@@ -61,10 +61,9 @@ type GlobalOptions struct {
 	TLSClientCert   string
 	CleanupCache    bool
 
-	LimitUploadKb       int
-	LimitDownloadKb     int
-	MinPackSize         uint
-	FileReadConcurrency uint
+	LimitUploadKb   int
+	LimitDownloadKb int
+	MinPackSize     uint
 
 	ctx      context.Context
 	password string
@@ -131,7 +130,6 @@ func init() {
 	f.IntVar(&globalOptions.LimitUploadKb, "limit-upload", 0, "limits uploads to a maximum rate in KiB/s. (default: unlimited)")
 	f.IntVar(&globalOptions.LimitDownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
 	f.UintVar(&globalOptions.MinPackSize, "min-packsize", 0, "set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)")
-	f.UintVar(&globalOptions.FileReadConcurrency, "file-read-concurrency", 0, "set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)")
 	f.StringSliceVarP(&globalOptions.Options, "option", "o", []string{}, "set extended option (`key=value`, can be specified multiple times)")
 
 	//setting default to 0 for these then plugging default values later fixes text output for (default: )

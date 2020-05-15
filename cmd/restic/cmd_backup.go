@@ -92,6 +92,7 @@ type BackupOptions struct {
 	Tags                []string
 	Host                string
 	FilesFrom           []string
+	FileReadConcurrency uint
 	TimeStamp           string
 	WithAtime           bool
 	IgnoreInode         bool
@@ -114,7 +115,7 @@ func init() {
 	f.BoolVar(&backupOptions.Stdin, "stdin", false, "read backup from stdin")
 	f.StringVar(&backupOptions.StdinFilename, "stdin-filename", "stdin", "`filename` to use when reading from stdin")
 	f.StringArrayVar(&backupOptions.Tags, "tag", nil, "add a `tag` for the new snapshot (can be specified multiple times)")
-
+	f.UintVar(&backupOptions.FileReadConcurrency, "file-read-concurrency", 0, "set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)")
 	f.StringVarP(&backupOptions.Host, "host", "H", "", "set the `hostname` for the snapshot manually. To prevent an expensive rescan use the \"parent\" flag")
 	f.StringVar(&backupOptions.Host, "hostname", "", "set the `hostname` for the snapshot manually")
 	f.MarkDeprecated("hostname", "use --host")
