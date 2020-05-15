@@ -15,6 +15,7 @@ Restic Documentation
    075_scripting
    080_examples
    090_participating
+   095_considerations
    100_references
    110_talks
    faq

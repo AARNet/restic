@@ -94,6 +94,7 @@ command:
           --exclude-caches                         excludes cache directories that are marked with a CACHEDIR.TAG file. See http://bford.info/cachedir/spec.html for the Cache Directory Tagging Standard
           --exclude-file file                      read exclude patterns from a file (can be specified multiple times)
           --exclude-if-present filename[:header]   takes filename[:header], exclude contents of directories containing filename (except filename itself) if header of that file is as provided (can be specified multiple times)
+          --file-read-concurrency uint             set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)
           --files-from file                        read the files to backup from file (can be combined with file args/can be specified multiple times)
       -f, --force                                  force re-reading the target files/directories (overrides the "parent" flag)
       -h, --help                                   help for backup
@@ -408,3 +409,4 @@ time it is used, so by looking at the timestamps of the sub directories of the
 cache directory it can decide which sub directories are old and probably not
 needed any more. You can either remove these directories manually, or run a
 restic command with the ``--cleanup-cache`` flag.
+
