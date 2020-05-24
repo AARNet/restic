@@ -105,14 +105,6 @@ func init() {
 		minpacksize = 1
 	}
 
-	//set FileReadConcurrency to 4 is not set in env
-	filereadconcurrency, err := strconv.Atoi(os.Getenv("RESTIC_FILE_READ_CONCURRENCY"))
-	if err != nil {
-		filereadconcurrency = 2
-	} else if filereadconcurrency < 1 {
-		filereadconcurrency = 1
-	}
-
 	f := cmdRoot.PersistentFlags()
 	f.StringVarP(&globalOptions.Repo, "repo", "r", os.Getenv("RESTIC_REPOSITORY"), "`repository` to backup to or restore from (default: $RESTIC_REPOSITORY)")
 	f.StringVarP(&globalOptions.PasswordFile, "password-file", "p", os.Getenv("RESTIC_PASSWORD_FILE"), "read the repository password from a `file` (default: $RESTIC_PASSWORD_FILE)")
@@ -135,9 +127,6 @@ func init() {
 	//setting default to 0 for these then plugging default values later fixes text output for (default: )
 	if globalOptions.MinPackSize == 0 {
 		globalOptions.MinPackSize = uint(minpacksize)
-	}
-	if globalOptions.FileReadConcurrency == 0 {
-		globalOptions.FileReadConcurrency = uint(filereadconcurrency)
 	}
 
 	restoreTerminal()

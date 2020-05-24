@@ -101,6 +101,13 @@ type BackupOptions struct {
 var backupOptions BackupOptions
 
 func init() {
+	//set FileReadConcurrency to 4 is not set in env
+	filereadconcurrency, err := strconv.Atoi(os.Getenv("RESTIC_FILE_READ_CONCURRENCY"))
+	if err != nil {
+		filereadconcurrency = 2
+	} else if filereadconcurrency < 1 {
+		filereadconcurrency = 1
+	}
 	cmdRoot.AddCommand(cmdBackup)
 
 	f := cmdBackup.Flags()
@@ -554,7 +561,7 @@ func runBackup(opts BackupOptions, gopts GlobalOptions, term *termstatus.Termina
 	}
 	t.Go(func() error { return sc.Scan(t.Context(gopts.ctx), targets) })
 
-	arch := archiver.New(repo, targetFS, archiver.Options{FileReadConcurrency: gopts.FileReadConcurrency})
+	arch := archiver.New(repo, targetFS, archiver.Options{FileReadConcurrency: backupOptions.FileReadConcurrency})
 	arch.SelectByName = selectByNameFilter
 	arch.Select = selectFilter
 	arch.WithAtime = opts.WithAtime
