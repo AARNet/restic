@@ -131,6 +131,11 @@ func init() {
 	f.StringVar(&backupOptions.TimeStamp, "time", "", "`time` of the backup (ex. '2012-11-01 22:08:41') (default: now)")
 	f.BoolVar(&backupOptions.WithAtime, "with-atime", false, "store the atime for all files and directories")
 	f.BoolVar(&backupOptions.IgnoreInode, "ignore-inode", false, "ignore inode number changes when checking for modified files")
+
+	if backupOptions.FileReadConcurrency== 0 {
+		backupOptions.FileReadConcurrency= uint(filereadconcurrency)
+	}
+
 }
 
 // filterExisting returns a slice of all existing items, or an error if no
