@@ -97,7 +97,7 @@ func init() {
 		return nil
 	})
 
-	//set MinPackSize to 4 is not set in env
+	//set MinPackSize to 4 if not set in env
 	minpacksize, err := strconv.Atoi(os.Getenv("RESTIC_MIN_PACKSIZE"))
 	if err != nil {
 		minpacksize = 4
