@@ -9,13 +9,13 @@ Restic Documentation
    030_preparing_a_new_repo
    040_backup
    045_working_with_repos
+   047_tuning_backup_parameters
    050_restore
    060_forget
    070_encryption
    075_scripting
    080_examples
    090_participating
-   095_considerations
    100_references
    110_talks
    faq
