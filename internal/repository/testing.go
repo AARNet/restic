@@ -38,6 +38,8 @@ func TestBackend(t testing.TB) (be restic.Backend, cleanup func()) {
 
 const testChunkerPol = chunker.Pol(0x3DA3358B4DC173)
 
+const defaultMinPackSize = 4 * 1024 * 1024
+
 // TestRepositoryWithBackend returns a repository initialized with a test
 // password. If be is nil, an in-memory backend is used. A constant polynomial
 // is used for the chunker and low-security test parameters.
