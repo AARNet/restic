@@ -24,6 +24,8 @@ func randomID(rd io.Reader) restic.ID {
 	return id
 }
 
+const defaultMinPackSize = 4 * 1024 * 1024
+
 const maxBlobSize = 1 << 20
 
 func min(a, b int) int {
