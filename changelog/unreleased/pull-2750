@@ -1,5 +1,5 @@
-Enhancement: Add --min-packsize and --file-read-concurrency
+Enhancement: Add --min-packsize, --file-read-concurrency and --save-blob-concurrency
 
-In order to tune restic for special situations we need to be able to configure --min-packsize and --file-read-concurrency.
+In order to tune restic for special situations we need to be able to configure --min-packsize, --file-read-concurrency and --save-blob-concurrency.
 
 https://github.com/restic/restic/pull/2750
