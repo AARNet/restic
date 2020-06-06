@@ -1,4 +1,4 @@
-Enhancement: Add --min-packsize, --file-read-concurrency and --save-blob-concurrency
+Enhancement: Add parameters for pack size, read concurrency, parallel writers
 
 In order to tune restic for special situations we need to be able to configure --min-packsize, --file-read-concurrency and --save-blob-concurrency.
 
