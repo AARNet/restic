@@ -24,7 +24,6 @@ func randomID(rd io.Reader) restic.ID {
 	return id
 }
 
-
 const maxBlobSize = 1 << 20
 
 func min(a, b int) int {
