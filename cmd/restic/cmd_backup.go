@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -113,9 +112,7 @@ func init() {
 	//set SaveBlobConcurrency to number of procs if not set in env
 	saveBlobConcurrency, err := strconv.Atoi(os.Getenv("RESTIC_SAVE_BLOB_CONCURRENCY"))
 	if err != nil {
-		saveBlobConcurrency = runtime.NumCPU()
-	} else if saveBlobConcurrency < 1 {
-		saveBlobConcurrency = 1
+		saveBlobConcurrency = 0
 	}
 
 	cmdRoot.AddCommand(cmdBackup)
@@ -146,7 +143,7 @@ func init() {
 	if backupOptions.FileReadConcurrency == 0 {
 		backupOptions.FileReadConcurrency = uint(fileReadConcurrency)
 	}
-	if backupOptions.SaveBlobConcurrency == 0 {
+	if backupOptions.SaveBlobConcurrency == 0 && saveBlobConcurrency > 0 {
 		backupOptions.SaveBlobConcurrency = uint(saveBlobConcurrency)
 	}
 
