@@ -9,6 +9,7 @@ Usage help is available:
 .. code-block:: console
 
     $ ./restic --help
+    
     restic is a backup program which allows saving multiple revisions of files and
     directories in an encrypted repository stored on different backends.
 
@@ -44,27 +45,27 @@ Usage help is available:
       version       Print version information
 
     Flags:
-          --cacert file                  file to load root certificates from (default: use system certificates)
-          --cache-dir string             set the cache directory. (default: use system default cache directory)
-          --cleanup-cache                auto remove old cache directories
-          --file-read-concurrency uint   set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)
-      -h, --help                         help for restic
-          --json                         set output mode to JSON for commands that support it
-          --key-hint string              key ID of key to try decrypting first (default: $RESTIC_KEY_HINT)
-          --limit-download int           limits downloads to a maximum rate in KiB/s. (default: unlimited)
-          --limit-upload int             limits uploads to a maximum rate in KiB/s. (default: unlimited)
-          --min-packsize uint            set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)
-          --no-cache                     do not use a local cache
-          --no-lock                      do not lock the repo, this allows some operations on read-only repos
-      -o, --option key=value             set extended option (key=value, can be specified multiple times)
-          --password-command string      specify a shell command to obtain a password (default: $RESTIC_PASSWORD_COMMAND)
-      -p, --password-file string         read the repository password from a file (default: $RESTIC_PASSWORD_FILE)
-      -q, --quiet                        do not output comprehensive progress report
-      -r, --repo string                  repository to backup to or restore from (default: $RESTIC_REPOSITORY)
-          --tls-client-cert string       path to a file containing PEM encoded TLS client certificate and private key
-      -v, --verbose n                    be verbose (specify --verbose multiple times or level n)
+          --cacert file                file to load root certificates from (default: use system certificates)
+          --cache-dir directory        set the cache directory. (default: use system default cache directory)
+          --cleanup-cache              auto remove old cache directories
+      -h, --help                       help for restic
+          --json                       set output mode to JSON for commands that support it
+          --key-hint key               key ID of key to try decrypting first (default: $RESTIC_KEY_HINT)
+          --limit-download int         limits downloads to a maximum rate in KiB/s. (default: unlimited)
+          --limit-upload int           limits uploads to a maximum rate in KiB/s. (default: unlimited)
+          --min-packsize uint          set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)
+          --no-cache                   do not use a local cache
+          --no-lock                    do not lock the repo, this allows some operations on read-only repos
+      -o, --option key=value           set extended option (key=value, can be specified multiple times)
+          --password-command command   specify a shell command to obtain a password (default: $RESTIC_PASSWORD_COMMAND)
+      -p, --password-file file         read the repository password from a file (default: $RESTIC_PASSWORD_FILE)
+      -q, --quiet                      do not output comprehensive progress report
+      -r, --repo repository            repository to backup to or restore from (default: $RESTIC_REPOSITORY)
+          --tls-client-cert file       path to a file containing PEM encoded TLS client certificate and private key
+      -v, --verbose n                  be verbose (specify --verbose multiple times or level n)
 
     Use "restic [command] --help" for more information about a command.
+
 
 Similar to programs such as ``git``, restic has a number of
 sub-commands. You can see these commands in the listing above. Each
@@ -103,6 +104,7 @@ command:
           --ignore-inode                           ignore inode number changes when checking for modified files
       -x, --one-file-system                        exclude other file systems
           --parent snapshot                        use this parent snapshot (default: last snapshot in the repo that has the same target files/directories)
+          --save-blob-concurrency uint             set the archiver concurrency.  Default: number of available CPUs
           --stdin                                  read backup from stdin
           --stdin-filename filename                filename to use when reading from stdin (default "stdin")
           --tag tag                                add a tag for the new snapshot (can be specified multiple times)
@@ -110,24 +112,23 @@ command:
           --with-atime                             store the atime for all files and directories
 
     Global Flags:
-          --cacert file                  file to load root certificates from (default: use system certificates)
-          --cache-dir string             set the cache directory. (default: use system default cache directory)
-          --cleanup-cache                auto remove old cache directories
-          --file-read-concurrency uint   set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)
-          --json                         set output mode to JSON for commands that support it
-          --key-hint string              key ID of key to try decrypting first (default: $RESTIC_KEY_HINT)
-          --limit-download int           limits downloads to a maximum rate in KiB/s. (default: unlimited)
-          --limit-upload int             limits uploads to a maximum rate in KiB/s. (default: unlimited)
-          --min-packsize uint            set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)
-          --no-cache                     do not use a local cache
-          --no-lock                      do not lock the repo, this allows some operations on read-only repos
-      -o, --option key=value             set extended option (key=value, can be specified multiple times)
-          --password-command string      specify a shell command to obtain a password (default: $RESTIC_PASSWORD_COMMAND)
-      -p, --password-file string         read the repository password from a file (default: $RESTIC_PASSWORD_FILE)
-      -q, --quiet                        do not output comprehensive progress report
-      -r, --repo string                  repository to backup to or restore from (default: $RESTIC_REPOSITORY)
-          --tls-client-cert string       path to a file containing PEM encoded TLS client certificate and private key
-      -v, --verbose n                    be verbose (specify --verbose multiple times or level n)
+          --cacert file                file to load root certificates from (default: use system certificates)
+          --cache-dir directory        set the cache directory. (default: use system default cache directory)
+          --cleanup-cache              auto remove old cache directories
+          --json                       set output mode to JSON for commands that support it
+          --key-hint key               key ID of key to try decrypting first (default: $RESTIC_KEY_HINT)
+          --limit-download int         limits downloads to a maximum rate in KiB/s. (default: unlimited)
+          --limit-upload int           limits uploads to a maximum rate in KiB/s. (default: unlimited)
+          --min-packsize uint          set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)
+          --no-cache                   do not use a local cache
+          --no-lock                    do not lock the repo, this allows some operations on read-only repos
+      -o, --option key=value           set extended option (key=value, can be specified multiple times)
+          --password-command command   specify a shell command to obtain a password (default: $RESTIC_PASSWORD_COMMAND)
+      -p, --password-file file         read the repository password from a file (default: $RESTIC_PASSWORD_FILE)
+      -q, --quiet                      do not output comprehensive progress report
+      -r, --repo repository            repository to backup to or restore from (default: $RESTIC_REPOSITORY)
+          --tls-client-cert file       path to a file containing PEM encoded TLS client certificate and private key
+      -v, --verbose n                  be verbose (specify --verbose multiple times or level n 
 
 Subcommand that support showing progress information such as ``backup``,
 ``check`` and ``prune`` will do so unless the quiet flag ``-q`` or
