@@ -98,11 +98,11 @@ func init() {
 	})
 
 	//set MinPackSize to 4 if not set in env
-	minpacksize, err := strconv.Atoi(os.Getenv("RESTIC_MIN_PACKSIZE"))
+	minPackSize, err := strconv.Atoi(os.Getenv("RESTIC_MIN_PACKSIZE"))
 	if err != nil {
-		minpacksize = 4
-	} else if minpacksize < 1 {
-		minpacksize = 1
+		minPackSize = 4
+	} else if minPackSize < 1 {
+		minPackSize = 1
 	}
 
 	f := cmdRoot.PersistentFlags()
@@ -126,7 +126,7 @@ func init() {
 
 	//setting default to 0 for these then plugging default values later fixes text output for (default: )
 	if globalOptions.MinPackSize == 0 {
-		globalOptions.MinPackSize = uint(minpacksize)
+		globalOptions.MinPackSize = uint(minPackSize)
 	}
 
 	restoreTerminal()
