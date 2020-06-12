@@ -411,7 +411,7 @@ func OpenRepository(opts GlobalOptions) (*repository.Repository, error) {
 		Warnf("%v returned error, retrying after %v: %v\n", msg, d, err)
 	})
 
-	s := repository.New(be, opts.MinPackSize)
+	s := repository.New(be, opts.MinPackSize*1024*1024)
 
 	passwordTriesLeft := 1
 	if stdinIsTerminal() && opts.password == "" {

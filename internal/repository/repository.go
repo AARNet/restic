@@ -35,13 +35,13 @@ type Repository struct {
 }
 
 // New returns a new repository with backend be.
-func New(be restic.Backend, minpacksize uint) *Repository {
+func New(be restic.Backend, minPackSize uint) *Repository {
 	repo := &Repository{
 		be:          be,
 		idx:         NewMasterIndex(),
 		dataPM:      newPackerManager(be, nil),
 		treePM:      newPackerManager(be, nil),
-		minPackSize: minpacksize * 1024 * 1024,
+		minPackSize: minPackSize,
 	}
 
 	return repo
