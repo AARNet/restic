@@ -103,19 +103,19 @@ type BackupOptions struct {
 var backupOptions BackupOptions
 
 func init() {
-	//set FileReadConcurrency to 4 is not set in env
-	filereadconcurrency, err := strconv.Atoi(os.Getenv("RESTIC_FILE_READ_CONCURRENCY"))
+	//set FileReadConcurrency to 2 if not set in env
+	fileReadConcurrency, err := strconv.Atoi(os.Getenv("RESTIC_FILE_READ_CONCURRENCY"))
 	if err != nil {
-		filereadconcurrency = 2
-	} else if filereadconcurrency < 1 {
-		filereadconcurrency = 1
+		fileReadConcurrency = 2
+	} else if fileReadConcurrency < 1 {
+		fileReadConcurrency = 1
 	}
 	//set SaveBlobConcurrency to number of procs if not set in env
-	saveblobconcurrency, err := strconv.Atoi(os.Getenv("RESTIC_SAVE_BLOB_CONCURRENCY"))
+	saveBlobConcurrency, err := strconv.Atoi(os.Getenv("RESTIC_SAVE_BLOB_CONCURRENCY"))
 	if err != nil {
-		saveblobconcurrency = runtime.NumCPU()
-	} else if saveblobconcurrency < 1 {
-		saveblobconcurrency = 1
+		saveBlobConcurrency = runtime.NumCPU()
+	} else if saveBlobConcurrency < 1 {
+		saveBlobConcurrency = 1
 	}
 
 	cmdRoot.AddCommand(cmdBackup)
@@ -144,10 +144,10 @@ func init() {
 	f.BoolVar(&backupOptions.IgnoreInode, "ignore-inode", false, "ignore inode number changes when checking for modified files")
 
 	if backupOptions.FileReadConcurrency == 0 {
-		backupOptions.FileReadConcurrency = uint(filereadconcurrency)
+		backupOptions.FileReadConcurrency = uint(fileReadConcurrency)
 	}
 	if backupOptions.SaveBlobConcurrency == 0 {
-		backupOptions.SaveBlobConcurrency = uint(saveblobconcurrency)
+		backupOptions.SaveBlobConcurrency = uint(saveBlobConcurrency)
 	}
 
 }
