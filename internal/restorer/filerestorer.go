@@ -7,6 +7,7 @@ import (
 	"math"
 	"path/filepath"
 	"sync"
+	"fmt"
 
 	"github.com/restic/restic/internal/crypto"
 	"github.com/restic/restic/internal/debug"
@@ -147,6 +148,7 @@ func (r *fileRestorer) restoreFiles(ctx context.Context) error {
 				if !ok {
 					return // channel closed
 				}
+				fmt.Println("Downloading pack: %s", pack.id)
 				r.downloadPack(ctx, pack)
 			}
 		}
