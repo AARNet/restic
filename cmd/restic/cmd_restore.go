@@ -44,6 +44,7 @@ type RestoreOptions struct {
 	Paths              []string
 	Tags               restic.TagLists
 	Verify             bool
+	DryRun             bool
 }
 
 var restoreOptions RestoreOptions
@@ -62,6 +63,7 @@ func init() {
 	flags.Var(&restoreOptions.Tags, "tag", "only consider snapshots which include this `taglist` for snapshot ID \"latest\"")
 	flags.StringArrayVar(&restoreOptions.Paths, "path", nil, "only consider snapshots which include this (absolute) `path` for snapshot ID \"latest\"")
 	flags.BoolVar(&restoreOptions.Verify, "verify", false, "verify restored files content")
+        flags.BoolVar(&restoreOptions.DryRun, "dry-run", false, "do not do anything only display pack files")
 }
 
 func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
@@ -186,7 +188,7 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 
 	Verbosef("restoring %s to %s\n", res.Snapshot(), opts.Target)
 
-	err = res.RestoreTo(ctx, opts.Target)
+	err = res.RestoreTo(ctx, opts.Target, opts.DryRun)
 	if err == nil && opts.Verify {
 		Verbosef("verifying files in %s\n", opts.Target)
 		var count int

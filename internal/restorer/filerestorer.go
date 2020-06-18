@@ -99,7 +99,7 @@ func (r *fileRestorer) forEachBlob(blobIDs []restic.ID, fn func(packID restic.ID
 	return nil
 }
 
-func (r *fileRestorer) restoreFiles(ctx context.Context) error {
+func (r *fileRestorer) restoreFiles(ctx context.Context, dryrun bool) error {
 
 	packs := make(map[restic.ID]*packInfo) // all packs
 
@@ -148,8 +148,11 @@ func (r *fileRestorer) restoreFiles(ctx context.Context) error {
 				if !ok {
 					return // channel closed
 				}
-				fmt.Println("Downloading pack: %s", pack.id)
-				r.downloadPack(ctx, pack)
+				if dryrun {
+					fmt.Println("Downloading pack: ", pack.id)
+				} else {
+				  r.downloadPack(ctx, pack)
+				}
 			}
 		}
 	}
