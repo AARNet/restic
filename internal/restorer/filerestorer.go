@@ -3,11 +3,11 @@ package restorer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"path/filepath"
 	"sync"
-	"fmt"
 
 	"github.com/restic/restic/internal/crypto"
 	"github.com/restic/restic/internal/debug"
@@ -151,7 +151,7 @@ func (r *fileRestorer) restoreFiles(ctx context.Context, dryrun bool) error {
 				if dryrun {
 					fmt.Println("Downloading pack: ", pack.id)
 				} else {
-				  r.downloadPack(ctx, pack)
+					r.downloadPack(ctx, pack)
 				}
 			}
 		}

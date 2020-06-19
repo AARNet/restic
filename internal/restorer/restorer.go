@@ -207,7 +207,7 @@ func (res *Restorer) RestoreTo(ctx context.Context, dst string, dryrun bool) err
 	idx := restic.NewHardlinkIndex()
 
 	filerestorer := newFileRestorer(dst, res.repo.Backend().Load, res.repo.Key(), res.repo.Index().Lookup)
-	
+
 	// first tree pass: create directories and collect all files to restore
 	err = res.traverseTree(ctx, dst, string(filepath.Separator), *res.sn.Tree, treeVisitor{
 		enterDir: func(node *restic.Node, target, location string) error {
