@@ -86,7 +86,7 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 		return errors.Fatalf("more than one snapshot ID specified: %v", args)
 	}
 
-	if opts.Target == "" {
+	if opts.Target == "" && !opts.DryRun {
 		return errors.Fatal("please specify a directory to restore to (--target)")
 	}
 
