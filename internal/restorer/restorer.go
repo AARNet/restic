@@ -213,15 +213,20 @@ func (res *Restorer) RestoreTo(ctx context.Context, dst string, dryrun bool) err
 		enterDir: func(node *restic.Node, target, location string) error {
 			// create dir with default permissions
 			// #leaveDir restores dir metadata after visiting all children
+			if dryrun {
+				return nil
+			}
 			return fs.MkdirAll(target, 0700)
 		},
 
 		visitNode: func(node *restic.Node, target, location string) error {
 			// create parent dir with default permissions
 			// second pass #leaveDir restores dir metadata after visiting/restoring all children
-			err := fs.MkdirAll(filepath.Dir(target), 0700)
-			if err != nil {
-				return err
+			if !dryrun {
+				err := fs.MkdirAll(filepath.Dir(target), 0700)
+				if err != nil {
+					return err
+				}
 			}
 
 			if node.Type != "file" {
