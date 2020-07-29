@@ -45,7 +45,7 @@ func runInit(gopts GlobalOptions, args []string) error {
 		return err
 	}
 
-	s := repository.New(be, gopts.MinPackSize)
+	s := repository.New(be, gopts.MinPackSize*1024*1024)
 
 	err = s.Init(gopts.ctx, gopts.password)
 	if err != nil {
