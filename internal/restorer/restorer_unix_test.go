@@ -42,7 +42,7 @@ func TestRestorerRestoreEmptyHardlinkedFileds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = res.RestoreTo(ctx, tempdir)
+	err = res.RestoreTo(ctx, tempdir, false)
 	rtest.OK(t, err)
 
 	f1, err := os.Stat(filepath.Join(tempdir, "dirtest/file1"))
