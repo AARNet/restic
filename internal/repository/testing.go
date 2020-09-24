@@ -38,6 +38,8 @@ func TestBackend(t testing.TB) (be restic.Backend, cleanup func()) {
 
 const testChunkerPol = chunker.Pol(0x3DA3358B4DC173)
 
+const defaultMinPackSize = 4 * 1024 * 1024
+
 // TestRepositoryWithBackend returns a repository initialized with a test
 // password. If be is nil, an in-memory backend is used. A constant polynomial
 // is used for the chunker and low-security test parameters.
@@ -51,7 +53,7 @@ func TestRepositoryWithBackend(t testing.TB, be restic.Backend) (r restic.Reposi
 		be, beCleanup = TestBackend(t)
 	}
 
-	repo := New(be)
+	repo := New(be, defaultMinPackSize)
 
 	cfg := restic.TestCreateConfig(t, testChunkerPol)
 	err := repo.init(context.TODO(), test.TestPassword, cfg)
@@ -98,7 +100,7 @@ func TestOpenLocal(t testing.TB, dir string) (r restic.Repository) {
 		t.Fatal(err)
 	}
 
-	repo := New(be)
+	repo := New(be, defaultMinPackSize)
 	err = repo.SearchKey(context.TODO(), test.TestPassword, 10, "")
 	if err != nil {
 		t.Fatal(err)

@@ -93,6 +93,8 @@ type BackupOptions struct {
 	Tags                    []string
 	Host                    string
 	FilesFrom               []string
+	FileReadConcurrency     uint
+	SaveBlobConcurrency     uint
 	TimeStamp               string
 	WithAtime               bool
 	IgnoreInode             bool
@@ -104,6 +106,19 @@ var backupOptions BackupOptions
 var ErrInvalidSourceData = errors.New("failed to read all source data during backup")
 
 func init() {
+	//set FileReadConcurrency to 2 if not set in env
+	fileReadConcurrency, err := strconv.Atoi(os.Getenv("RESTIC_FILE_READ_CONCURRENCY"))
+	if err != nil {
+		fileReadConcurrency = 2
+	} else if fileReadConcurrency < 1 {
+		fileReadConcurrency = 1
+	}
+	//set SaveBlobConcurrency to number of procs if not set in env
+	saveBlobConcurrency, err := strconv.Atoi(os.Getenv("RESTIC_SAVE_BLOB_CONCURRENCY"))
+	if err != nil {
+		saveBlobConcurrency = 0
+	}
+
 	cmdRoot.AddCommand(cmdBackup)
 
 	f := cmdBackup.Flags()
@@ -120,15 +135,24 @@ func init() {
 	f.BoolVar(&backupOptions.Stdin, "stdin", false, "read backup from stdin")
 	f.StringVar(&backupOptions.StdinFilename, "stdin-filename", "stdin", "`filename` to use when reading from stdin")
 	f.StringArrayVar(&backupOptions.Tags, "tag", nil, "add a `tag` for the new snapshot (can be specified multiple times)")
-
+	f.UintVar(&backupOptions.FileReadConcurrency, "file-read-concurrency", 0, "set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)")
 	f.StringVarP(&backupOptions.Host, "host", "H", "", "set the `hostname` for the snapshot manually. To prevent an expensive rescan use the \"parent\" flag")
 	f.StringVar(&backupOptions.Host, "hostname", "", "set the `hostname` for the snapshot manually")
 	f.MarkDeprecated("hostname", "use --host")
+	f.UintVar(&backupOptions.SaveBlobConcurrency, "save-blob-concurrency", 0, "set the archiver concurrency.  Default: number of available CPUs")
 
 	f.StringArrayVar(&backupOptions.FilesFrom, "files-from", nil, "read the files to backup from `file` (can be combined with file args/can be specified multiple times)")
 	f.StringVar(&backupOptions.TimeStamp, "time", "", "`time` of the backup (ex. '2012-11-01 22:08:41') (default: now)")
 	f.BoolVar(&backupOptions.WithAtime, "with-atime", false, "store the atime for all files and directories")
 	f.BoolVar(&backupOptions.IgnoreInode, "ignore-inode", false, "ignore inode number changes when checking for modified files")
+
+	if backupOptions.FileReadConcurrency == 0 {
+		backupOptions.FileReadConcurrency = uint(fileReadConcurrency)
+	}
+	if backupOptions.SaveBlobConcurrency == 0 && saveBlobConcurrency > 0 {
+		backupOptions.SaveBlobConcurrency = uint(saveBlobConcurrency)
+	}
+
 }
 
 // filterExisting returns a slice of all existing items, or an error if no
@@ -575,7 +599,7 @@ func runBackup(opts BackupOptions, gopts GlobalOptions, term *termstatus.Termina
 	}
 	t.Go(func() error { return sc.Scan(t.Context(gopts.ctx), targets) })
 
-	arch := archiver.New(repo, targetFS, archiver.Options{})
+	arch := archiver.New(repo, targetFS, archiver.Options{FileReadConcurrency: backupOptions.FileReadConcurrency, SaveBlobConcurrency: backupOptions.SaveBlobConcurrency})
 	arch.SelectByName = selectByNameFilter
 	arch.Select = selectFilter
 	arch.WithAtime = opts.WithAtime
