@@ -3,6 +3,7 @@ package restorer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"path/filepath"
@@ -99,7 +100,7 @@ func (r *fileRestorer) forEachBlob(blobIDs []restic.ID, fn func(packID restic.ID
 	return nil
 }
 
-func (r *fileRestorer) restoreFiles(ctx context.Context) error {
+func (r *fileRestorer) restoreFiles(ctx context.Context, dryrun bool) error {
 
 	packs := make(map[restic.ID]*packInfo) // all packs
 	// Process packs in order of first access. While this cannot guarantee
@@ -153,7 +154,11 @@ func (r *fileRestorer) restoreFiles(ctx context.Context) error {
 				if !ok {
 					return // channel closed
 				}
-				r.downloadPack(ctx, pack)
+				if dryrun {
+					fmt.Println("Downloading pack: ", pack.id)
+				} else {
+					r.downloadPack(ctx, pack)
+				}
 			}
 		}
 	}
