@@ -15,7 +15,8 @@ This build includes:
 | -------- | -------- |
 | Restic Git | https://github.com/restic/restic/ |
 | Restic Documentation | https://restic.readthedocs.io/en/latest/ |
-| Jenkins Build | https://jenkins.aarnet.net.au/job/CloudStor/job/restic/ |
+
+
 | `--dry-run` source | https://github.com/beer4duke/restic/tree/b12db3c5180352bb3fe739059ddd6a4c32f0aab4 |
 | `--min-packsize` and `--file-read-concurrency` source | https://github.com/metalsp0rk/restic/commit/74d19cf2b8be9372860ea74b94be95b4f59e115a |
 
@@ -30,9 +31,11 @@ There is a Dockerfile included that will build an image to perform the initialis
 
 ### How to build and run
 
-There is a helper build script included. So just run it and then you can run the new image it built.
-
 #### Building the docker iamge
+
+A new build of the restic docker image will be built from master when the restic pipeline completes successfully.
+
+If you need to manually build one, you can just run:
 
 
 docker build -t restic-build:v0.10.0 .
