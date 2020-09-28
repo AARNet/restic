@@ -24,6 +24,74 @@ This build includes:
 
 See [README.rst](README.rst) for the official README for restic.
 
+## Docker Image
+
+There is a Dockerfile included that will build an image to perform the initialisation of a repository (if necessary) and backup to it.
+
+### How to build and run
+
+There is a helper build script included. So just run it and then you can run the new image it built.
+
+#### Building the docker iamge
+
+
+docker build -t restic-build:v0.10.0 .
+
+
+#### Example running with S3
+
+
+docker run -e AWS_ACCESS_KEY_ID=minioadmin \
+-e AWS_SECRET_ACCESS_KEY=minioadmin \
+-e RESTIC_PASSWORD=super_secret_repository_password \
+-e RESTIC_REPOSITORY=s3:https://minio.s3.aarnet.edu.au/test_restic_repo/ \
+-v `pwd`:/backup -v `pwd`/logs:/var/log/restic restic-build:v0.10.0
+
+
+#### Example running with WebDAV
+
+
+docker run -e RCLONE_WEBDAV_USER=webdav_user \
+-e RCLONE_WEBDAV_PASS=super_secret \
+-e RCLONE_WEBDAV_URL=https://cloudstor-uat.aarnet.edu.au/plus/remote.php/webdav \
+-e RESTIC_PASSWORD=super_secret_repository_password \
+-e RESTIC_REPOSITORY=rclone::webdav:/test_restic_repo \
+-v `pwd`:/backup -v `pwd`/logs:/var/log/restic restic-build:v0.10.0
+
+
+### Volumes
+
+* `/backup` - The default directory to backup
+* `/var/log/restic` - (optional) The log directory. It will contain a file called `restic.log` and `last_status`.
+
+### Environment Variables
+
+#### Restic
+| Variable | Default | Purpose |
+| -------- | -------- | -------- |
+| RESTIC_REPOSITORY | `none` | The restic repository to use in the format of `s3:https://endpoint.s3.aarnet.edu.au/bucket_name` or `rclone::webdav:/path/for/repository` |
+| RESTIC_PASSWORD | `none` | The password for the restic repository |
+| RESTIC_BACKUP_SOURCE | `/backup` | The directory to backup |
+| RESTIC_LOG_VERBOSITY | `0` | The verbosity of the logs. The higher the number, the more verbose the logs. I have not tried setting it higher than `3`.
+
+#### S3 specific
+
+| Variable | Default | Purpose |
+| -------- | -------- | -------- |
+| AWS_ACCESS_KEY_ID | `none` | Access key for the S3 endpoint |
+| AWS_SECRET_ACCESS_KEY | `none` | Secret key for the S3 endpoint |
+
+#### WebDAV specific
+
+As restic uses rclone for WebDAV, the configuration is done using the rclone environment variables.
+
+| Variable | Default | Purpose |
+| -------- | -------- | -------- |
+| RCLONE_WEBDAV_URL | `none` | The URL to the WebDAV endpoint (eg. `https://cloudstor.aarnet.edu.au/plus/remote.php/webdav`)|
+| RCLONE_WEBDAV_USER | `none` | The username for the webdav endpoint |
+| RCLONE_WEBDAV_PASS | `none` | The password for the webdav endpoint |
+| RCLONE_WEBDAV_VENDOR | `owncloud` | The vendor for the WebDAV endpoint (can be `owncloud`, `nextcloud` or `other`) |
+
 ## Development
 
 ### Requirements

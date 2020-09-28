@@ -20,4 +20,9 @@ ADD aarnet/docker/ /
 RUN apk add --no-cache bash && \
 	chmod +x /usr/bin/rclone /usr/bin/restic /docker-entrypoint.sh
 
+ENV RESTIC_BACKUP_SOURCE=/backup \
+	RESTIC_LOG_VERBOSITY=0 \
+	RESTIC_LOG_DIR=/var/log/restic \
+	RCLONE_WEBDAV_VENDOR=owncloud
+
 ENTRYPOINT ["/docker-entrypoint.sh"]
