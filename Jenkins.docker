@@ -1,0 +1,72 @@
+pipeline {
+	agent {
+		node {
+			label 'dev'
+			customWorkspace "${env.JOB_NAME}/${env.BUILD_TAG}"
+		}
+	}
+	options {
+		ansiColor('xterm')
+	}
+	environment {
+		dockerRegistry	= "aplregistry.aarnet.edu.au"
+		ImageTag        = "ci-${env.BUILD_NUMBER}"
+		ImageName	= "${dockerRegistry}/cloudservices/restic:${ImageTag}"
+	}
+	stages {
+		stage ('Build docker image') {
+			steps {
+				withDockerRegistry(url: 'https://aplregistry.aarnet.edu.au', credentialsId: 'jenkins-cloudservices-docker') {
+					sh script: "docker build -t ${ImageName} -f Dockerfile .", label: "Build docker image"
+				}
+			}
+			post {
+				success {
+					withDockerRegistry(url: 'https://aplregistry.aarnet.edu.au', credentialsId: 'jenkins-cloudservices-docker') {
+						sh script: "docker push ${ImageName}", label: "Push image to registry"
+					}
+				}
+				always {
+					sh script: "( cd aarnet/devenv && BUILD_TAG=${ImageTag} ./devenv -d -j )", label: "Tear down EOS and minio"
+					sh script: "docker rmi ${ImageName}", label: "Cleanup docker image"
+				}
+			}
+		}
+	}
+	post {
+		always {
+			sh script: "docker run --user=root -t --rm -v ${WORKSPACE}:/workspace ${buildImageName} rm -rf /workspace/gocache /workspace/build", label: "Cleanup up go cache and build"
+			sh script: "docker rmi ${buildImageName}", label: "Cleanup docker environment image"
+		}
+		success {
+			slackSend(
+				channel: 'apl-cs-pipeline',
+				notifyCommitters: true,
+				tokenCredentialId: 'slack-notifications-apl-cs-pipeline',
+				baseUrl: 'https://aarnet.slack.com/services/hooks/jenkins-ci/',
+				color: 'good',
+				message: "${currentBuild.projectName} #${currentBuild.number} completed successfully.\n" + "${currentBuild.description}\n" + "${env.BUILD_URL}\n"
+			)
+		}
+		unstable {
+			slackSend(
+				channel: 'apl-cs-pipeline',
+				notifyCommitters: true,
+				tokenCredentialId: 'slack-notifications-apl-cs-pipeline',
+				baseUrl: 'https://aarnet.slack.com/services/hooks/jenkins-ci/',
+				color: 'warning',
+				message: "${currentBuild.projectName} #${currentBuild.number} built successfully but marked as unstable.\n" + "${currentBuild.description}\n" + "${env.BUILD_URL}\n"
+			)
+		}
+		failure {
+			slackSend(
+				channel: 'apl-cs-pipeline',
+				notifyCommitters: true,
+				tokenCredentialId: 'slack-notifications-apl-cs-pipeline',
+				baseUrl: 'https://aarnet.slack.com/services/hooks/jenkins-ci/',
+				color: 'danger',
+				message: "${currentBuild.projectName} #${currentBuild.number} failed.\n" + "${currentBuild.description}\n" + "${env.BUILD_URL}\n"
+			)
+		}
+	}
+};

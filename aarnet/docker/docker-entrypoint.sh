@@ -96,7 +96,7 @@ config_webdav() {
 
 cmd_restic() {
 	set -o pipefail
-	restic --json --verbose ${@} 2>&1 | tee -a ${RESTIC_LOG_DIR}/restic.log
+	restic --json --verbose=${RESTIC_LOG_VERBOSITY} ${@} 2>&1 | tee -a ${RESTIC_LOG_DIR}/restic.log
 	set +o pipefail
 }
 
