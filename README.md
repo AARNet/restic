@@ -75,7 +75,9 @@ docker run -e RCLONE_WEBDAV_USER=webdav_user \
 | RESTIC_REPOSITORY | `none` | The restic repository to use in the format of `s3:https://endpoint.s3.aarnet.edu.au/bucket_name` or `rclone::webdav:/path/for/repository` |
 | RESTIC_PASSWORD | `none` | The password for the restic repository |
 | RESTIC_BACKUP_SOURCE | `/backup` | The directory to backup |
-| RESTIC_LOG_VERBOSITY | `0` | The verbosity of the logs. The higher the number, the more verbose the logs. I have not tried setting it higher than `3`.
+| RESTIC_LOG_VERBOSITY | `0` | The verbosity of the logs. The higher the number, the more verbose the logs. I have not tried setting it higher than `3`. |
+| RESTIC_FILE_READ_CONCURRENCY | `2` | The number of files to read concurrently. This is used with `restic backup`. |
+| RESTIC_MIN_PACKSIZE | `4` | The minimum pack size. |
 
 #### S3 specific
 

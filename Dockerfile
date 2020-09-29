@@ -23,6 +23,8 @@ RUN apk add --no-cache bash && \
 ENV RESTIC_BACKUP_SOURCE=/backup \
 	RESTIC_LOG_VERBOSITY=0 \
 	RESTIC_LOG_DIR=/var/log/restic \
-	RCLONE_WEBDAV_VENDOR=owncloud
+	RCLONE_WEBDAV_VENDOR=owncloud \
+	RESTIC_FILE_READ_CONCURRENCY=2 \
+	RESTIC_MIN_PACKSIZE=4
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
