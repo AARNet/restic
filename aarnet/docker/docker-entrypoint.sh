@@ -5,7 +5,7 @@ config_print() {
 	echo "Configured environment variables:"
 	echo "`env`" | grep -E "^(RCLONE_WEBDAV|RESTIC_|AWS_)" | sort | while IFS='=' read -r NAME VALUE; do
 		if [[ $(echo $NAME | grep -c -E "PASS|SECRET") -ne 0 ]]; then
-			echo "  $NAME=**READACTED**"
+			echo "  $NAME=**REDACTED**"
 		else
 			echo "  $NAME=$VALUE"
 		fi
