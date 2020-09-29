@@ -65,7 +65,7 @@ docker run -e RCLONE_WEBDAV_USER=webdav_user \
 ### Volumes
 
 * `/backup` - The default directory to backup
-* `/var/log/restic` - (optional) The log directory. It will contain a file called `restic.log` and `last_status`.
+* `/var/log/restic` - (optional) The log directory. It will contain a file called `restic.log` and `last_status`. `last_status` will container a status and message of the last run.
 
 ### Environment Variables
 
