@@ -9,6 +9,7 @@ Usage help is available:
 .. code-block:: console
 
     $ ./restic --help
+
     restic is a backup program which allows saving multiple revisions of files and
     directories in an encrypted repository stored on different backends.
 
@@ -53,6 +54,7 @@ Usage help is available:
           --key-hint key               key ID of key to try decrypting first (default: $RESTIC_KEY_HINT)
           --limit-download int         limits downloads to a maximum rate in KiB/s. (default: unlimited)
           --limit-upload int           limits uploads to a maximum rate in KiB/s. (default: unlimited)
+          --min-packsize uint          set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)
           --no-cache                   do not use a local cache
           --no-lock                    do not lock the repo, this allows some operations on read-only repos
       -o, --option key=value           set extended option (key=value, can be specified multiple times)
@@ -64,6 +66,7 @@ Usage help is available:
       -v, --verbose n                  be verbose (specify --verbose multiple times or level --verbose=n)
 
     Use "restic [command] --help" for more information about a command.
+
 
 Similar to programs such as ``git``, restic has a number of
 sub-commands. You can see these commands in the listing above. Each
@@ -92,6 +95,7 @@ command:
           --exclude-caches                         excludes cache directories that are marked with a CACHEDIR.TAG file. See https://bford.info/cachedir/ for the Cache Directory Tagging Standard
           --exclude-file file                      read exclude patterns from a file (can be specified multiple times)
           --exclude-if-present filename[:header]   takes filename[:header], exclude contents of directories containing filename (except filename itself) if header of that file is as provided (can be specified multiple times)
+          --file-read-concurrency uint             set concurrency on file reads. (default: $RESTIC_FILE_READ_CONCURRENCY or 2)
           --files-from file                        read the files to backup from file (can be combined with file args/can be specified multiple times)
       -f, --force                                  force re-reading the target files/directories (overrides the "parent" flag)
       -h, --help                                   help for backup
@@ -101,6 +105,7 @@ command:
           --ignore-inode                           ignore inode number changes when checking for modified files
       -x, --one-file-system                        exclude other file systems
           --parent snapshot                        use this parent snapshot (default: last snapshot in the repo that has the same target files/directories)
+          --save-blob-concurrency uint             set the archiver concurrency.  Default: number of available CPUs
           --stdin                                  read backup from stdin
           --stdin-filename filename                filename to use when reading from stdin (default "stdin")
           --tag tag                                add a tag for the new snapshot (can be specified multiple times)
@@ -115,6 +120,7 @@ command:
           --key-hint key               key ID of key to try decrypting first (default: $RESTIC_KEY_HINT)
           --limit-download int         limits downloads to a maximum rate in KiB/s. (default: unlimited)
           --limit-upload int           limits uploads to a maximum rate in KiB/s. (default: unlimited)
+          --min-packsize uint          set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)
           --no-cache                   do not use a local cache
           --no-lock                    do not lock the repo, this allows some operations on read-only repos
       -o, --option key=value           set extended option (key=value, can be specified multiple times)
@@ -413,3 +419,4 @@ time it is used, so by looking at the timestamps of the sub directories of the
 cache directory it can decide which sub directories are old and probably not
 needed any more. You can either remove these directories manually, or run a
 restic command with the ``--cleanup-cache`` flag.
+
