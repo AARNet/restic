@@ -72,9 +72,13 @@ func tarNode(ctx context.Context, tw *tar.Writer, node *restic.Node, repo restic
 	}
 
 	header := &tar.Header{
-		Name:       filepath.ToSlash(relPath),
-		Size:       int64(node.Size),
-		Mode:       int64(node.Mode),
+		Name: filepath.ToSlash(relPath),
+		Size: int64(node.Size),
+		// Mode fits 21 bits in PAX format (7 octal digits). All higher bits in
+		// node.Mode are related to the node type and dealt with below.
+		//
+		// https://golang.org/pkg/archive/tar/#Format
+		Mode:       int64(node.Mode & 07777777),
 		Uid:        int(node.UID),
 		Gid:        int(node.GID),
 		ModTime:    node.ModTime,
@@ -90,6 +94,22 @@ func tarNode(ctx context.Context, tw *tar.Writer, node *restic.Node, repo restic
 
 	if IsDir(node) {
 		header.Typeflag = tar.TypeDir
+	}
+
+	if IsDev(node) {
+		header.Typeflag = tar.TypeBlock
+		header.Devmajor = int64((node.Device >> 8) & 0xff)
+		header.Devminor = int64(node.Device & 0xff)
+	}
+
+	if IsCharDev(node) {
+		header.Typeflag = tar.TypeChar
+		header.Devmajor = int64((node.Device >> 8) & 0xff)
+		header.Devminor = int64(node.Device & 0xff)
+	}
+
+	if IsFIFO(node) {
+		header.Typeflag = tar.TypeFifo
 	}
 
 	err = tw.WriteHeader(header)
@@ -161,4 +181,24 @@ func IsLink(node *restic.Node) bool {
 // IsFile checks if the given node is a file
 func IsFile(node *restic.Node) bool {
 	return node.Type == "file"
+}
+
+// IsDev checks if the given node is a dev
+func IsDev(node *restic.Node) bool {
+	return node.Type == "dev"
+}
+
+// IsCharDev checks if the given node is a chardev
+func IsCharDev(node *restic.Node) bool {
+	return node.Type == "chardev"
+}
+
+// IsFIFO checks if the given node is a fifo
+func IsFIFO(node *restic.Node) bool {
+	return node.Type == "fifo"
+}
+
+// IsSocket checks if the given node is a socket
+func IsSocket(node *restic.Node) bool {
+	return node.Type == "socket"
 }
