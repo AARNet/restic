@@ -50,13 +50,30 @@ still get a nice live status display. Be aware that the live status shows the
 processed files and not the transferred data. Transferred volume might be lower
 (due to de-duplication) or higher.
 
-If you run the command again, restic will create another snapshot of
+On Windows, the ``--use-fs-snapshot`` option will use Windows' Volume Shadow Copy
+Service (VSS) when creating backups. Restic will transparently create a VSS
+snapshot for each volume that contains files to backup. Files are read from the
+VSS snapshot instead of the regular filesystem. This allows to backup files that are
+exclusively locked by another process during the backup.
+
+By default VSS ignores Outlook OST files. This is not a restriction of restic
+but the default Windows VSS configuration. The files not to snapshot are
+configured in the Windows registry under the following key:
+
+.. code-block:: console
+
+    HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\BackupRestore\FilesNotToSnapshot
+
+For more details refer the official Windows documentation e.g. the article
+``Registry Keys and Values for Backup and Restore``.
+
+If you run the backup command again, restic will create another snapshot of
 your data, but this time it's even faster and no new data was added to the
 repository (since all data is already there). This is de-duplication at work!
 
 .. code-block:: console
 
-    $ restic -r /srv/restic-repo backup --verbose ~/work
+    $ restic -r /srv/restic-repo --verbose backup ~/work
     open repository
     enter password for repository:
     password is correct
@@ -90,7 +107,7 @@ restic encounters:
 
     $ echo 'more data foo bar' >> ~/work.txt
 
-    $ restic -r /srv/restic-repo backup --verbose --verbose ~/work.txt
+    $ restic -r /srv/restic-repo --verbose --verbose backup ~/work.txt
     open repository
     enter password for repository:
     password is correct
@@ -114,23 +131,61 @@ restic encounters:
 In fact several hosts may use the same repository to backup directories
 and files leading to a greater de-duplication.
 
-Please be aware that when you backup different directories (or the
-directories to be saved have a variable name component like a
-time/date), restic always needs to read all files and only afterwards
-can compute which parts of the files need to be saved. When you backup
-the same directory again (maybe with new or changed files) restic will
-find the old snapshot in the repo and by default only reads those files
-that are new or have been modified since the last snapshot. This is
-decided based on the following attributes of the file in the file system:
-
- * Type (file, symlink, or directory?)
- * Modification time
- * Size
- * Inode number (internal number used to reference a file in a file system)
-
 Now is a good time to run ``restic check`` to verify that all data
 is properly stored in the repository. You should run this command regularly
 to make sure the internal structure of the repository is free of errors.
+
+File change detection
+*********************
+
+When restic encounters a file that has already been backed up, whether in the
+current backup or a previous one, it makes sure the file's contents are only
+stored once in the repository. To do so, it normally has to scan the entire
+contents of every file. Because this can be very expensive, restic also uses a
+change detection rule based on file metadata to determine whether a file is
+likely unchanged since a previous backup. If it is, the file is not scanned
+again.
+
+Change detection is only performed for regular files (not special files,
+symlinks or directories) that have the exact same path as they did in a
+previous backup of the same location.  If a file or one of its containing
+directories was renamed, it is considered a different file and its entire
+contents will be scanned again.
+
+Metadata changes (permissions, ownership, etc.) are always included in the
+backup, even if file contents are considered unchanged.
+
+On **Unix** (including Linux and Mac), given that a file lives at the same
+location as a file in a previous backup, the following file metadata
+attributes have to match for its contents to be presumed unchanged:
+
+ * Modification timestamp (mtime).
+ * Metadata change timestamp (ctime).
+ * File size.
+ * Inode number (internal number used to reference a file in a filesystem).
+
+The reason for requiring both mtime and ctime to match is that Unix programs
+can freely change mtime (and some do). In such cases, a ctime change may be
+the only hint that a file did change.
+
+The following ``restic backup`` command line flags modify the change detection
+rules:
+
+ * ``--force``: turn off change detection and rescan all files.
+ * ``--ignore-ctime``: require mtime to match, but allow ctime to differ.
+ * ``--ignore-inode``: require mtime to match, but allow inode number
+   and ctime to differ.
+
+The option ``--ignore-inode`` exists to support FUSE-based filesystems and
+pCloud, which do not assign stable inodes to files.
+
+Note that the device id of the containing mount point is never taken into
+account. Device numbers are not stable for removable devices and ZFS snapshots.
+If you want to force a re-scan in such a case, you can change the mountpoint.
+
+On **Windows**, a file is considered unchanged when its path, size
+and modification time match, and only ``--force`` has any effect.
+The other options are recognized but ignored.
 
 Excluding Files
 ***************
@@ -172,11 +227,16 @@ This instructs restic to exclude files matching the following criteria:
 Patterns use `filepath.Glob <https://golang.org/pkg/path/filepath/#Glob>`__ internally,
 see `filepath.Match <https://golang.org/pkg/path/filepath/#Match>`__ for
 syntax. Patterns are tested against the full path of a file/dir to be saved,
-even if restic is passed a relative path to save.
+even if restic is passed a relative path to save. Empty lines and lines
+starting with a ``#`` are ignored.
 
-Environment-variables in exclude files are expanded with `os.ExpandEnv <https://golang.org/pkg/os/#ExpandEnv>`__,
-so ``/home/$USER/foo`` will be expanded to ``/home/bob/foo`` for the user ``bob``.
-To get a literal dollar sign, write ``$$`` to the file. Note that tilde (``~``) expansion does not work, please use the ``$HOME`` environment variable instead.
+Environment variables in exclude files are expanded with `os.ExpandEnv
+<https://golang.org/pkg/os/#ExpandEnv>`__, so ``/home/$USER/foo`` will be
+expanded to ``/home/bob/foo`` for the user ``bob``. To get a literal dollar
+sign, write ``$$`` to the file - this has to be done even when there's no
+matching environment variable for the word following a single ``$``. Note
+that tilde (``~``) is not expanded, instead use the ``$HOME`` or equivalent
+environment variable (depending on your operating system).
 
 Patterns need to match on complete path components. For example, the pattern ``foo``:
 
@@ -186,11 +246,10 @@ Patterns need to match on complete path components. For example, the pattern ``f
 A trailing ``/`` is ignored, a leading ``/`` anchors the pattern at the root directory.
 This means, ``/bin`` matches ``/bin/bash`` but does not match ``/usr/bin/restic``.
 
-Regular wildcards cannot be used to match over the directory separator ``/``.
-For example: ``b*ash`` matches ``/bin/bash`` but does not match ``/bin/ash``.
-
-For this, the special wildcard ``**`` can be used to match arbitrary
-sub-directories: The pattern ``foo/**/bar`` matches:
+Regular wildcards cannot be used to match over the directory separator ``/``,
+e.g. ``b*ash`` matches ``/bin/bash`` but does not match ``/bin/ash``. For this,
+the special wildcard ``**`` can be used to match arbitrary sub-directories: The
+pattern ``foo/**/bar`` matches:
 
  * ``/dir1/foo/dir2/bar/file``
  * ``/foo/bar/file``
@@ -216,7 +275,7 @@ On most Unixy shells, you can either quote or use backslashes. For example:
 By specifying the option ``--one-file-system`` you can instruct restic
 to only backup files from the file systems the initially specified files
 or directories reside on. In other words, it will prevent restic from crossing
-filesystem boundaries when performing a backup.
+filesystem boundaries and subvolumes when performing a backup.
 
 For example, if you backup ``/`` with this option and you have external
 media mounted under ``/media/usb`` then restic will not back up ``/media/usb``
@@ -259,36 +318,62 @@ suffix the size value with one of ``k``/``K`` for kilobytes, ``m``/``M`` for meg
 Including Files
 ***************
 
-By using the ``--files-from`` option you can read the files you want to back
-up from one or more files. This is especially useful if a lot of files have
-to be backed up that are not in the same folder or are maybe pre-filtered by
-other software.
+The options ``--files-from``, ``--files-from-verbatim`` and ``--files-from-raw``
+allow you to give restic a file containing lists of file patterns or paths to
+be backed up. This is useful e.g. when you want to back up files from many
+different locations, or when you use some other software to generate the list
+of files to back up.
 
-For example maybe you want to backup files which have a name that matches a
-certain pattern:
+The argument passed to ``--files-from`` must be the name of a text file that
+contains one *pattern* per line. The file must be encoded as UTF-8, or UTF-16
+with a byte-order mark. Leading and trailing whitespace is removed from the
+patterns. Empty lines and lines starting with a ``#`` are ignored and each
+pattern is expanded when read, such that special characters in it are expanded
+using the Go function `filepath.Glob <https://golang.org/pkg/path/filepath/#Glob>`__
+- please see its documentation for the syntax you can use in the patterns.
+
+The argument passed to ``--files-from-verbatim`` must be the name of a text file
+that contains one *path* per line, e.g. as generated by GNU ``find`` with the
+``-print`` flag. Unlike ``--files-from``, ``--files-from-verbatim`` does not
+expand any special characters in the list of paths, does not strip off any
+whitespace and does not ignore lines starting with a ``#``. This option simply
+reads and uses each line as-is, although empty lines are still ignored. Use this
+option when you want to backup a list of filenames containing the special
+characters that would otherwise be expanded when using ``--files-from``.
+
+The ``--files-from-raw`` option is a variant of ``--files-from-verbatim`` that
+requires each line in the file to be terminated by an ASCII NUL character (the
+``\0`` zero byte) instead of a newline, so that it can even handle file paths
+containing newlines in their name or are not encoded as UTF-8 (except on
+Windows, where the listed filenames must still be encoded in UTF-8. This option
+is the safest choice when generating the list of filenames from a script (e.g.
+GNU ``find`` with the ``-print0`` flag).
+
+All three options interpret the argument ``-`` as standard input and will read
+the list of files/patterns from there instead of a text file.
+
+In all cases, paths may be absolute or relative to ``restic backup``'s working
+directory.
+
+For example, maybe you want to backup files which have a name that matches a
+certain regular expression pattern (uses GNU ``find``):
 
 .. code-block:: console
 
-    $ find /tmp/somefiles | grep 'PATTERN' > /tmp/files_to_backup
+    $ find /tmp/some_folder -regex PATTERN -print0 > /tmp/files_to_backup
 
 You can then use restic to backup the filtered files:
 
 .. code-block:: console
 
-    $ restic -r /srv/restic-repo backup --files-from /tmp/files_to_backup
+    $ restic -r /srv/restic-repo backup --files-from-raw /tmp/files_to_backup
 
-Incidentally you can also combine ``--files-from`` with the normal files
-args:
+You can combine all three options with each other and with the normal file arguments:
 
 .. code-block:: console
 
-    $ restic -r /srv/restic-repo backup --files-from /tmp/files_to_backup /tmp/some_additional_file
-
-Paths in the listing file can be absolute or relative. Please note that
-patterns listed in a ``--files-from`` file are treated the same way as
-exclude patterns are, which means that beginning and trailing spaces are
-trimmed and special characters must be escaped. See the documentation
-above for more information.
+    $ restic backup --files-from /tmp/files_to_backup /tmp/some_additional_file
+    $ restic backup --files-from /tmp/glob-pattern --files-from-raw /tmp/generated-list /tmp/some_additional_file
 
 Comparing Snapshots
 *******************
@@ -334,10 +419,6 @@ restic itself. This means that for each new backup a lot of metadata is
 written, and the next backup needs to write new metadata again. If you really
 want to save the access time for files and directories, you can pass the
 ``--with-atime`` option to the ``backup`` command.
-
-In filesystems that do not support inode consistency, like FUSE-based ones and pCloud, it is
-possible to ignore inode on changed files comparison by passing ``--ignore-inode`` to
-``backup`` command.
 
 Reading data from stdin
 ***********************
@@ -407,6 +488,7 @@ environment variables. The following lists these environment variables:
 
 .. code-block:: console
 
+    RESTIC_REPOSITORY_FILE              Name of file containing the repository location (replaces --repository-file)
     RESTIC_REPOSITORY                   Location of repository (replaces -r)
     RESTIC_PASSWORD_FILE                Location of password file (replaces --password-file)
     RESTIC_PASSWORD                     The actual password for the repository
@@ -414,6 +496,8 @@ environment variables. The following lists these environment variables:
     RESTIC_KEY_HINT                     ID of key to try decrypting first, before other keys
     RESTIC_CACHE_DIR                    Location of the cache directory
     RESTIC_PROGRESS_FPS                 Frames per second by which the progress bar is updated
+
+    TMPDIR                              Location for temporary files
 
     AWS_ACCESS_KEY_ID                   Amazon S3 access key ID
     AWS_SECRET_ACCESS_KEY               Amazon S3 secret access key
@@ -426,13 +510,17 @@ environment variables. The following lists these environment variables:
     OS_AUTH_URL                         Auth URL for keystone authentication
     OS_REGION_NAME                      Region name for keystone authentication
     OS_USERNAME                         Username for keystone authentication
+    OS_USER_ID                          User ID for keystone v3 authentication
     OS_PASSWORD                         Password for keystone authentication
     OS_TENANT_ID                        Tenant ID for keystone v2 authentication
     OS_TENANT_NAME                      Tenant name for keystone v2 authentication
 
     OS_USER_DOMAIN_NAME                 User domain name for keystone authentication
+    OS_USER_DOMAIN_ID                   User domain ID for keystone v3 authentication
     OS_PROJECT_NAME                     Project name for keystone authentication
     OS_PROJECT_DOMAIN_NAME              Project domain name for keystone authentication
+    OS_PROJECT_DOMAIN_ID                Project domain ID for keystone v3 authentication
+    OS_TRUST_ID                         Trust ID for keystone v3 authentication
 
     OS_APPLICATION_CREDENTIAL_ID        Application Credential ID (keystone v3)
     OS_APPLICATION_CREDENTIAL_NAME      Application Credential Name (keystone v3)
@@ -452,12 +540,12 @@ environment variables. The following lists these environment variables:
 
     RCLONE_BWLIMIT                      rclone bandwidth limit
 
-In addition to restic-specific environment variables, the following system-wide environment variables
-are taken into account for various operations:
+See :ref:`caching` for the rules concerning cache locations when
+``RESTIC_CACHE_DIR`` is not set.
 
- * ``$XDG_CACHE_HOME/restic``, ``$HOME/.cache/restic``: :ref:`caching`.
- * ``$TMPDIR``: :ref:`temporary_files`.
- * ``$PATH/fusermount``: Binary for ``restic mount``.
+The external programs that restic may execute include ``rclone`` (for rclone
+backends) and ``ssh`` (for the SFTP backend). These may respond to further
+environment variables and configuration files; see their respective manuals.
 
 
 Exit status codes

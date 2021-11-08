@@ -3,6 +3,7 @@ package archiver
 import (
 	"bytes"
 	"context"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/restic/restic/internal/backend/mem"
 	"github.com/restic/restic/internal/checker"
 	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/fs"
@@ -91,7 +93,7 @@ func saveFile(t testing.TB, repo restic.Repository, filename string, filesystem 
 		t.Fatal(err)
 	}
 
-	err = repo.Flush(ctx)
+	err = repo.Flush(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,6 +505,18 @@ func save(t testing.TB, filename string, data []byte) {
 	}
 }
 
+func chmodTwice(t testing.TB, name string) {
+	// POSIX says that ctime is updated "even if the file status does not
+	// change", but let's make sure it does change, just in case.
+	err := os.Chmod(name, 0700)
+	restictest.OK(t, err)
+
+	sleep()
+
+	err = os.Chmod(name, 0600)
+	restictest.OK(t, err)
+}
+
 func lstat(t testing.TB, name string) os.FileInfo {
 	fi, err := os.Lstat(name)
 	if err != nil {
@@ -531,6 +545,13 @@ func remove(t testing.TB, filename string) {
 	}
 }
 
+func rename(t testing.TB, oldname, newname string) {
+	err := os.Rename(oldname, newname)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func nodeFromFI(t testing.TB, filename string, fi os.FileInfo) *restic.Node {
 	node, err := restic.NodeFromFileInfo(filename, fi)
 	if err != nil {
@@ -540,26 +561,26 @@ func nodeFromFI(t testing.TB, filename string, fi os.FileInfo) *restic.Node {
 	return node
 }
 
+// sleep sleeps long enough to ensure a timestamp change.
+func sleep() {
+	d := 50 * time.Millisecond
+	if runtime.GOOS == "darwin" {
+		// On older Darwin instances, the file system only supports one second
+		// granularity.
+		d = 1500 * time.Millisecond
+	}
+	time.Sleep(d)
+}
+
 func TestFileChanged(t *testing.T) {
 	var defaultContent = []byte("foobar")
-
-	var d = 50 * time.Millisecond
-	if runtime.GOOS == "darwin" {
-		// on older darwin instances the file system only supports one second
-		// granularity
-		d = time.Second
-	}
-
-	sleep := func() {
-		time.Sleep(d)
-	}
 
 	var tests = []struct {
 		Name           string
 		SkipForWindows bool
 		Content        []byte
 		Modify         func(t testing.TB, filename string)
-		IgnoreInode    bool
+		ChangeIgnore   uint
 		SameFile       bool
 	}{
 		{
@@ -617,16 +638,32 @@ func TestFileChanged(t *testing.T) {
 			},
 		},
 		{
+			Name:           "ctime-change",
+			Modify:         chmodTwice,
+			SameFile:       false,
+			SkipForWindows: true, // No ctime on Windows, so this test would fail.
+		},
+		{
+			Name:           "ignore-ctime-change",
+			Modify:         chmodTwice,
+			ChangeIgnore:   ChangeIgnoreCtime,
+			SameFile:       true,
+			SkipForWindows: true, // No ctime on Windows, so this test is meaningless.
+		},
+		{
 			Name: "ignore-inode",
 			Modify: func(t testing.TB, filename string) {
 				fi := lstat(t, filename)
-				remove(t, filename)
-				sleep()
+				// First create the new file, then remove the old one,
+				// so that the old file retains its inode number.
+				tempname := filename + ".old"
+				rename(t, filename, tempname)
 				save(t, filename, defaultContent)
+				remove(t, tempname)
 				setTimestamp(t, filename, fi.ModTime(), fi.ModTime())
 			},
-			IgnoreInode: true,
-			SameFile:    true,
+			ChangeIgnore: ChangeIgnoreCtime | ChangeIgnoreInode,
+			SameFile:     true,
 		},
 	}
 
@@ -649,7 +686,7 @@ func TestFileChanged(t *testing.T) {
 			fiBefore := lstat(t, filename)
 			node := nodeFromFI(t, filename, fiBefore)
 
-			if fileChanged(fiBefore, node, false) {
+			if fileChanged(fiBefore, node, 0) {
 				t.Fatalf("unchanged file detected as changed")
 			}
 
@@ -659,12 +696,12 @@ func TestFileChanged(t *testing.T) {
 
 			if test.SameFile {
 				// file should be detected as unchanged
-				if fileChanged(fiAfter, node, test.IgnoreInode) {
+				if fileChanged(fiAfter, node, test.ChangeIgnore) {
 					t.Fatalf("unmodified file detected as changed")
 				}
 			} else {
 				// file should be detected as changed
-				if !fileChanged(fiAfter, node, test.IgnoreInode) && !test.SameFile {
+				if !fileChanged(fiAfter, node, test.ChangeIgnore) && !test.SameFile {
 					t.Fatalf("modified file detected as unchanged")
 				}
 			}
@@ -682,7 +719,7 @@ func TestFilChangedSpecialCases(t *testing.T) {
 
 	t.Run("nil-node", func(t *testing.T) {
 		fi := lstat(t, filename)
-		if !fileChanged(fi, nil, false) {
+		if !fileChanged(fi, nil, 0) {
 			t.Fatal("nil node detected as unchanged")
 		}
 	})
@@ -691,7 +728,7 @@ func TestFilChangedSpecialCases(t *testing.T) {
 		fi := lstat(t, filename)
 		node := nodeFromFI(t, filename, fi)
 		node.Type = "symlink"
-		if !fileChanged(fi, node, false) {
+		if !fileChanged(fi, node, 0) {
 			t.Fatal("node with changed type detected as unchanged")
 		}
 	})
@@ -803,7 +840,7 @@ func TestArchiverSaveDir(t *testing.T) {
 				chdir = filepath.Join(chdir, test.chdir)
 			}
 
-			back := fs.TestChdir(t, chdir)
+			back := restictest.Chdir(t, chdir)
 			defer back()
 
 			fi, err := fs.Lstat(test.target)
@@ -839,6 +876,7 @@ func TestArchiverSaveDir(t *testing.T) {
 				t.Errorf("wrong stats returned in TreeBlobs, want > 0, got %d", stats.TreeBlobs)
 			}
 
+			ctx = context.Background()
 			node.Name = targetNodeName
 			tree := &restic.Tree{Nodes: []*restic.Node{node}}
 			treeID, err := repo.SaveTree(ctx, tree)
@@ -934,7 +972,7 @@ func TestArchiverSaveDirIncremental(t *testing.T) {
 
 		t.Logf("node subtree %v", node.Subtree)
 
-		err = repo.Flush(ctx)
+		err = repo.Flush(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1063,7 +1101,7 @@ func TestArchiverSaveTree(t *testing.T) {
 
 			arch.runWorkers(ctx, &tmb)
 
-			back := fs.TestChdir(t, tempdir)
+			back := restictest.Chdir(t, tempdir)
 			defer back()
 
 			if test.prepare != nil {
@@ -1091,6 +1129,7 @@ func TestArchiverSaveTree(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			ctx = context.Background()
 			err = repo.Flush(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -1353,7 +1392,7 @@ func TestArchiverSnapshot(t *testing.T) {
 				chdir = filepath.Join(chdir, filepath.FromSlash(test.chdir))
 			}
 
-			back := fs.TestChdir(t, chdir)
+			back := restictest.Chdir(t, chdir)
 			defer back()
 
 			var targets []string
@@ -1507,7 +1546,7 @@ func TestArchiverSnapshotSelect(t *testing.T) {
 			arch := New(repo, fs.Track{FS: fs.Local{}}, Options{})
 			arch.Select = test.selFn
 
-			back := fs.TestChdir(t, tempdir)
+			back := restictest.Chdir(t, tempdir)
 			defer back()
 
 			targets := []string{"."}
@@ -1614,7 +1653,7 @@ func TestArchiverParent(t *testing.T) {
 
 			arch := New(repo, testFS, Options{})
 
-			back := fs.TestChdir(t, tempdir)
+			back := restictest.Chdir(t, tempdir)
 			defer back()
 
 			_, firstSnapshotID, err := arch.Snapshot(ctx, []string{"."}, SnapshotOptions{Time: time.Now()})
@@ -1774,7 +1813,7 @@ func TestArchiverErrorReporting(t *testing.T) {
 			tempdir, repo, cleanup := prepareTempdirRepoSrc(t, test.src)
 			defer cleanup()
 
-			back := fs.TestChdir(t, tempdir)
+			back := restictest.Chdir(t, tempdir)
 			defer back()
 
 			if test.prepare != nil {
@@ -1810,6 +1849,69 @@ func TestArchiverErrorReporting(t *testing.T) {
 			checker.TestCheckRepo(t, repo)
 		})
 	}
+}
+
+type noCancelBackend struct {
+	restic.Backend
+}
+
+func (c *noCancelBackend) Test(ctx context.Context, h restic.Handle) (bool, error) {
+	return c.Backend.Test(context.Background(), h)
+}
+
+func (c *noCancelBackend) Remove(ctx context.Context, h restic.Handle) error {
+	return c.Backend.Remove(context.Background(), h)
+}
+
+func (c *noCancelBackend) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader) error {
+	return c.Backend.Save(context.Background(), h, rd)
+}
+
+func (c *noCancelBackend) Load(ctx context.Context, h restic.Handle, length int, offset int64, fn func(rd io.Reader) error) error {
+	return c.Backend.Load(context.Background(), h, length, offset, fn)
+}
+
+func (c *noCancelBackend) Stat(ctx context.Context, h restic.Handle) (restic.FileInfo, error) {
+	return c.Backend.Stat(context.Background(), h)
+}
+
+func (c *noCancelBackend) List(ctx context.Context, t restic.FileType, fn func(restic.FileInfo) error) error {
+	return c.Backend.List(context.Background(), t, fn)
+}
+
+func (c *noCancelBackend) Delete(ctx context.Context) error {
+	return c.Backend.Delete(context.Background())
+}
+
+func TestArchiverContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tempdir, removeTempdir := restictest.TempDir(t)
+	TestCreateFiles(t, tempdir, TestDir{
+		"targetfile": TestFile{Content: "foobar"},
+	})
+	defer removeTempdir()
+
+	// Ensure that the archiver itself reports the canceled context and not just the backend
+	repo, _ := repository.TestRepositoryWithBackend(t, &noCancelBackend{mem.New()})
+
+	back := restictest.Chdir(t, tempdir)
+	defer back()
+
+	arch := New(repo, fs.Track{FS: fs.Local{}}, Options{})
+
+	_, snapshotID, err := arch.Snapshot(ctx, []string{"."}, SnapshotOptions{Time: time.Now()})
+
+	if err != nil {
+		t.Logf("found expected error (%v)", err)
+		return
+	}
+	if snapshotID.IsNull() {
+		t.Fatalf("no error returned but found null id")
+	}
+
+	t.Fatalf("expected error not returned by archiver")
 }
 
 // TrackFS keeps track which files are opened. For some files, an error is injected.
@@ -1915,7 +2017,7 @@ func TestArchiverAbortEarlyOnError(t *testing.T) {
 			tempdir, repo, cleanup := prepareTempdirRepoSrc(t, test.src)
 			defer cleanup()
 
-			back := fs.TestChdir(t, tempdir)
+			back := restictest.Chdir(t, tempdir)
 			defer back()
 
 			testFS := &TrackFS{
@@ -2046,7 +2148,7 @@ func TestMetadataChanged(t *testing.T) {
 	tempdir, repo, cleanup := prepareTempdirRepoSrc(t, files)
 	defer cleanup()
 
-	back := fs.TestChdir(t, tempdir)
+	back := restictest.Chdir(t, tempdir)
 	defer back()
 
 	// get metadata
@@ -2094,7 +2196,7 @@ func TestMetadataChanged(t *testing.T) {
 	want.Group = ""
 
 	// make another snapshot
-	snapshotID, node3 := snapshot(t, repo, fs, snapshotID, "testfile")
+	_, node3 := snapshot(t, repo, fs, snapshotID, "testfile")
 	// Override username and group to empty string - in case underlying system has user with UID 51234
 	// See https://github.com/restic/restic/issues/2372
 	node3.User = ""
@@ -2121,7 +2223,7 @@ func TestRacyFileSwap(t *testing.T) {
 	tempdir, repo, cleanup := prepareTempdirRepoSrc(t, files)
 	defer cleanup()
 
-	back := fs.TestChdir(t, tempdir)
+	back := restictest.Chdir(t, tempdir)
 	defer back()
 
 	// get metadata of current folder

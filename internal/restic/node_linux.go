@@ -7,7 +7,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/restic/restic/internal/errors"
-
 	"github.com/restic/restic/internal/fs"
 )
 
@@ -16,7 +15,6 @@ func (node Node) restoreSymlinkTimestamps(path string, utimes [2]syscall.Timespe
 	if err != nil {
 		return errors.Wrap(err, "Open")
 	}
-	defer dir.Close()
 
 	times := []unix.Timespec{
 		{Sec: utimes[0].Sec, Nsec: utimes[0].Nsec},
@@ -26,16 +24,14 @@ func (node Node) restoreSymlinkTimestamps(path string, utimes [2]syscall.Timespe
 	err = unix.UtimesNanoAt(int(dir.Fd()), filepath.Base(path), times, unix.AT_SYMLINK_NOFOLLOW)
 
 	if err != nil {
+		// ignore subsequent errors
+		_ = dir.Close()
 		return errors.Wrap(err, "UtimesNanoAt")
 	}
 
-	return nil
+	return dir.Close()
 }
 
-func (node Node) device() int {
-	return int(node.Device)
-}
-
-func (s statUnix) atim() syscall.Timespec { return s.Atim }
-func (s statUnix) mtim() syscall.Timespec { return s.Mtim }
-func (s statUnix) ctim() syscall.Timespec { return s.Ctim }
+func (s statT) atim() syscall.Timespec { return s.Atim }
+func (s statT) mtim() syscall.Timespec { return s.Mtim }
+func (s statT) ctim() syscall.Timespec { return s.Ctim }

@@ -63,7 +63,7 @@ func init() {
 	flags.Var(&restoreOptions.Tags, "tag", "only consider snapshots which include this `taglist` for snapshot ID \"latest\"")
 	flags.StringArrayVar(&restoreOptions.Paths, "path", nil, "only consider snapshots which include this (absolute) `path` for snapshot ID \"latest\"")
 	flags.BoolVar(&restoreOptions.Verify, "verify", false, "verify restored files content")
-        flags.BoolVar(&restoreOptions.DryRun, "dry-run", false, "do not do anything only display pack files")
+	flags.BoolVar(&restoreOptions.DryRun, "dry-run", false, "do not do anything only display pack files")
 }
 
 func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
@@ -104,7 +104,7 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 	}
 
 	if !gopts.NoLock {
-		lock, err := lockRepo(repo)
+		lock, err := lockRepo(ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
@@ -124,13 +124,13 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 			Exitf(1, "latest snapshot for criteria not found: %v Paths:%v Hosts:%v", err, opts.Paths, opts.Hosts)
 		}
 	} else {
-		id, err = restic.FindSnapshot(repo, snapshotIDString)
+		id, err = restic.FindSnapshot(ctx, repo, snapshotIDString)
 		if err != nil {
 			Exitf(1, "invalid id %q: %v", snapshotIDString, err)
 		}
 	}
 
-	res, err := restorer.NewRestorer(repo, id)
+	res, err := restorer.NewRestorer(ctx, repo, id)
 	if err != nil {
 		Exitf(2, "creating restorer failed: %v\n", err)
 	}
@@ -142,13 +142,15 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 		return nil
 	}
 
+	excludePatterns := filter.ParsePatterns(opts.Exclude)
+	insensitiveExcludePatterns := filter.ParsePatterns(opts.InsensitiveExclude)
 	selectExcludeFilter := func(item string, dstpath string, node *restic.Node) (selectedForRestore bool, childMayBeSelected bool) {
-		matched, _, err := filter.List(opts.Exclude, item)
+		matched, err := filter.List(excludePatterns, item)
 		if err != nil {
 			Warnf("error for exclude pattern: %v", err)
 		}
 
-		matchedInsensitive, _, err := filter.List(opts.InsensitiveExclude, strings.ToLower(item))
+		matchedInsensitive, err := filter.List(insensitiveExcludePatterns, strings.ToLower(item))
 		if err != nil {
 			Warnf("error for iexclude pattern: %v", err)
 		}
@@ -163,13 +165,15 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 		return selectedForRestore, childMayBeSelected
 	}
 
+	includePatterns := filter.ParsePatterns(opts.Include)
+	insensitiveIncludePatterns := filter.ParsePatterns(opts.InsensitiveInclude)
 	selectIncludeFilter := func(item string, dstpath string, node *restic.Node) (selectedForRestore bool, childMayBeSelected bool) {
-		matched, childMayMatch, err := filter.List(opts.Include, item)
+		matched, childMayMatch, err := filter.ListWithChild(includePatterns, item)
 		if err != nil {
 			Warnf("error for include pattern: %v", err)
 		}
 
-		matchedInsensitive, childMayMatchInsensitive, err := filter.List(opts.InsensitiveInclude, strings.ToLower(item))
+		matchedInsensitive, childMayMatchInsensitive, err := filter.ListWithChild(insensitiveIncludePatterns, strings.ToLower(item))
 		if err != nil {
 			Warnf("error for iexclude pattern: %v", err)
 		}
@@ -187,16 +191,27 @@ func runRestore(opts RestoreOptions, gopts GlobalOptions, args []string) error {
 	}
 
 	Verbosef("restoring %s to %s\n", res.Snapshot(), opts.Target)
-
 	err = res.RestoreTo(ctx, opts.Target, opts.DryRun)
-	if err == nil && opts.Verify {
+	if err != nil {
+		return err
+	}
+
+	if totalErrors > 0 {
+		return errors.Fatalf("There were %d errors\n", totalErrors)
+	}
+
+	if opts.Verify {
 		Verbosef("verifying files in %s\n", opts.Target)
 		var count int
 		count, err = res.VerifyFiles(ctx, opts.Target)
+		if err != nil {
+			return err
+		}
+		if totalErrors > 0 {
+			return errors.Fatalf("There were %d errors\n", totalErrors)
+		}
 		Verbosef("finished verifying %d files in %s\n", count, opts.Target)
 	}
-	if totalErrors > 0 {
-		Printf("There were %d errors\n", totalErrors)
-	}
-	return err
+
+	return nil
 }

@@ -42,27 +42,30 @@ func (l limitedRewindReader) Read(b []byte) (int, error) {
 
 func (r rateLimitedBackend) Load(ctx context.Context, h restic.Handle, length int, offset int64, consumer func(rd io.Reader) error) error {
 	return r.Backend.Load(ctx, h, length, offset, func(rd io.Reader) error {
-		lrd := limitedReadCloser{
-			limited: r.limiter.Downstream(rd),
-		}
-		return consumer(lrd)
+		return consumer(newDownstreamLimitedReader(rd, r.limiter))
 	})
 }
 
-type limitedReadCloser struct {
-	original io.ReadCloser
-	limited  io.Reader
+type limitedReader struct {
+	io.Reader
+	writerTo io.WriterTo
+	limiter  Limiter
 }
 
-func (l limitedReadCloser) Read(b []byte) (n int, err error) {
-	return l.limited.Read(b)
-}
-
-func (l limitedReadCloser) Close() error {
-	if l.original == nil {
-		return nil
+func newDownstreamLimitedReader(rd io.Reader, limiter Limiter) io.Reader {
+	lrd := limiter.Downstream(rd)
+	if wt, ok := rd.(io.WriterTo); ok {
+		lrd = &limitedReader{
+			Reader:   lrd,
+			writerTo: wt,
+			limiter:  limiter,
+		}
 	}
-	return l.original.Close()
+	return lrd
+}
+
+func (l *limitedReader) WriteTo(w io.Writer) (int64, error) {
+	return l.writerTo.WriteTo(l.limiter.DownstreamWriter(w))
 }
 
 var _ restic.Backend = (*rateLimitedBackend)(nil)

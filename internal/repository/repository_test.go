@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -273,6 +275,14 @@ func TestLoadJSONUnpacked(t *testing.T) {
 
 	rtest.Equals(t, sn.Hostname, sn2.Hostname)
 	rtest.Equals(t, sn.Username, sn2.Username)
+
+	var cf restic.Config
+
+	// load and check Config
+	err = repo.LoadJSONUnpacked(context.TODO(), restic.ConfigFile, id, &cf)
+	rtest.OK(t, err)
+
+	rtest.Equals(t, cf.ChunkerPolynomial, repository.TestChunkerPol)
 }
 
 var repoFixture = filepath.Join("testdata", "test-repo.tar.gz")
@@ -283,6 +293,20 @@ func TestRepositoryLoadIndex(t *testing.T) {
 
 	repo := repository.TestOpenLocal(t, repodir)
 	rtest.OK(t, repo.LoadIndex(context.TODO()))
+}
+
+// loadIndex loads the index id from backend and returns it.
+func loadIndex(ctx context.Context, repo restic.Repository, id restic.ID) (*repository.Index, error) {
+	buf, err := repo.LoadAndDecrypt(ctx, nil, restic.IndexFile, id)
+	if err != nil {
+		return nil, err
+	}
+
+	idx, oldFormat, err := repository.DecodeIndex(buf, id)
+	if oldFormat {
+		fmt.Fprintf(os.Stderr, "index %v has old format\n", id.Str())
+	}
+	return idx, err
 }
 
 func BenchmarkLoadIndex(b *testing.B) {
@@ -296,10 +320,9 @@ func BenchmarkLoadIndex(b *testing.B) {
 	for i := 0; i < 5000; i++ {
 		idx.Store(restic.PackedBlob{
 			Blob: restic.Blob{
-				Type:   restic.DataBlob,
-				Length: 1234,
-				ID:     restic.NewRandomID(),
-				Offset: 1235,
+				BlobHandle: restic.NewRandomBlobHandle(),
+				Length:     1234,
+				Offset:     1235,
 			},
 			PackID: restic.NewRandomID(),
 		})
@@ -316,7 +339,7 @@ func BenchmarkLoadIndex(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := repository.LoadIndex(context.TODO(), repo, id)
+		_, err := loadIndex(context.TODO(), repo, id)
 		rtest.OK(b, err)
 	}
 }
@@ -366,7 +389,7 @@ func TestRepositoryIncrementalIndex(t *testing.T) {
 	packEntries := make(map[restic.ID]map[restic.ID]struct{})
 
 	err := repo.List(context.TODO(), restic.IndexFile, func(id restic.ID, size int64) error {
-		idx, err := repository.LoadIndex(context.TODO(), repo, id)
+		idx, err := loadIndex(context.TODO(), repo, id)
 		rtest.OK(t, err)
 
 		for pb := range idx.Each(context.TODO()) {

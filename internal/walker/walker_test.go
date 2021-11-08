@@ -28,17 +28,23 @@ func buildTreeMap(tree TestTree, m TreeMap) restic.ID {
 	for name, item := range tree {
 		switch elem := item.(type) {
 		case TestFile:
-			res.Insert(&restic.Node{
+			err := res.Insert(&restic.Node{
 				Name: name,
 				Type: "file",
 			})
+			if err != nil {
+				panic(err)
+			}
 		case TestTree:
 			id := buildTreeMap(elem, m)
-			res.Insert(&restic.Node{
+			err := res.Insert(&restic.Node{
 				Name:    name,
 				Subtree: &id,
 				Type:    "dir",
 			})
+			if err != nil {
+				panic(err)
+			}
 		default:
 			panic(fmt.Sprintf("invalid type %T", elem))
 		}
@@ -244,7 +250,7 @@ func TestWalker(t *testing.T) {
 				}),
 				checkSkipFor(
 					map[string]struct{}{
-						"/subdir": struct{}{},
+						"/subdir": {},
 					}, []string{
 						"/",
 						"/foo",
@@ -299,7 +305,7 @@ func TestWalker(t *testing.T) {
 				}),
 				checkSkipFor(
 					map[string]struct{}{
-						"/subdir1": struct{}{},
+						"/subdir1": {},
 					}, []string{
 						"/",
 						"/foo",
@@ -312,8 +318,8 @@ func TestWalker(t *testing.T) {
 				),
 				checkSkipFor(
 					map[string]struct{}{
-						"/subdir1":            struct{}{},
-						"/subdir2/subsubdir2": struct{}{},
+						"/subdir1":            {},
+						"/subdir2/subsubdir2": {},
 					}, []string{
 						"/",
 						"/foo",
@@ -325,7 +331,7 @@ func TestWalker(t *testing.T) {
 				),
 				checkSkipFor(
 					map[string]struct{}{
-						"/foo": struct{}{},
+						"/foo": {},
 					}, []string{
 						"/",
 						"/foo",
@@ -390,7 +396,7 @@ func TestWalker(t *testing.T) {
 				}),
 				checkIgnore(
 					map[string]struct{}{
-						"/subdir1": struct{}{},
+						"/subdir1": {},
 					}, map[string]bool{
 						"/subdir1": true,
 					}, []string{
@@ -415,7 +421,7 @@ func TestWalker(t *testing.T) {
 				),
 				checkIgnore(
 					map[string]struct{}{
-						"/subdir2": struct{}{},
+						"/subdir2": {},
 					}, map[string]bool{
 						"/subdir2": true,
 					}, []string{

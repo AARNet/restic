@@ -4,17 +4,18 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/restic/restic/internal/backend"
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/restic"
+
+	"github.com/Azure/azure-sdk-for-go/storage"
+	"github.com/cenkalti/backoff/v4"
 )
 
 // Backend stores data on an azure endpoint.
@@ -116,10 +117,20 @@ func (be *Backend) Path() string {
 	return be.prefix
 }
 
+type azureAdapter struct {
+	restic.RewindReader
+}
+
+func (azureAdapter) Close() error { return nil }
+
+func (a azureAdapter) Len() int {
+	return int(a.Length())
+}
+
 // Save stores data in the backend at the handle.
 func (be *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader) error {
 	if err := h.Valid(); err != nil {
-		return err
+		return backoff.Permanent(err)
 	}
 
 	objName := be.Filename(h)
@@ -133,7 +144,8 @@ func (be *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindRe
 	var err error
 	if rd.Length() < 256*1024*1024 {
 		// wrap the reader so that net/http client cannot close the reader
-		dataReader := ioutil.NopCloser(rd)
+		// CreateBlockBlobFromReader reads length from `Len()``
+		dataReader := azureAdapter{rd}
 
 		// if it's smaller than 256miB, then just create the file directly from the reader
 		err = be.container.GetBlobReference(objName).CreateBlockBlobFromReader(dataReader, nil)
@@ -160,6 +172,7 @@ func (be *Backend) saveLarge(ctx context.Context, objName string, rd restic.Rewi
 	// read the data, in 100 MiB chunks
 	buf := make([]byte, 100*1024*1024)
 	var blocks []storage.Block
+	uploadedBytes := 0
 
 	for {
 		n, err := io.ReadFull(rd, buf)
@@ -176,6 +189,7 @@ func (be *Backend) saveLarge(ctx context.Context, objName string, rd restic.Rewi
 		}
 
 		buf = buf[:n]
+		uploadedBytes += n
 
 		// upload it as a new "block", use the base64 hash for the ID
 		h := restic.Hash(buf)
@@ -190,6 +204,11 @@ func (be *Backend) saveLarge(ctx context.Context, objName string, rd restic.Rewi
 			ID:     id,
 			Status: "Uncommitted",
 		})
+	}
+
+	// sanity check
+	if uploadedBytes != int(rd.Length()) {
+		return errors.Errorf("wrote %d bytes instead of the expected %d bytes", uploadedBytes, rd.Length())
 	}
 
 	debug.Log("uploaded %d parts: %v", len(blocks), blocks)
@@ -219,7 +238,7 @@ func (be *Backend) Load(ctx context.Context, h restic.Handle, length int, offset
 func (be *Backend) openReader(ctx context.Context, h restic.Handle, length int, offset int64) (io.ReadCloser, error) {
 	debug.Log("Load %v, length %v, offset %v from %v", h, length, offset, be.Filename(h))
 	if err := h.Valid(); err != nil {
-		return nil, err
+		return nil, backoff.Permanent(err)
 	}
 
 	if offset < 0 {

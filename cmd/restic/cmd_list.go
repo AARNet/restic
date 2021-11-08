@@ -40,7 +40,7 @@ func runList(cmd *cobra.Command, opts GlobalOptions, args []string) error {
 	}
 
 	if !opts.NoLock {
-		lock, err := lockRepo(repo)
+		lock, err := lockRepo(opts.ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
@@ -60,8 +60,7 @@ func runList(cmd *cobra.Command, opts GlobalOptions, args []string) error {
 	case "locks":
 		t = restic.LockFile
 	case "blobs":
-		return repo.List(opts.ctx, restic.IndexFile, func(id restic.ID, size int64) error {
-			idx, err := repository.LoadIndex(opts.ctx, repo, id)
+		return repository.ForAllIndexes(opts.ctx, repo, func(id restic.ID, idx *repository.Index, oldFormat bool, err error) error {
 			if err != nil {
 				return err
 			}
@@ -70,7 +69,6 @@ func runList(cmd *cobra.Command, opts GlobalOptions, args []string) error {
 			}
 			return nil
 		})
-
 	default:
 		return errors.Fatal("invalid type")
 	}

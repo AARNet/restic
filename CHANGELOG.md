@@ -1,3 +1,921 @@
+Changelog for restic 0.12.1 (2021-08-03)
+=======================================
+
+The following sections list the changes in restic 0.12.1 relevant to
+restic users. The changes are ordered by importance.
+
+Summary
+-------
+
+ * Fix #2742: Improve error handling for rclone and REST backend over HTTP2
+ * Fix #3111: Fix terminal output redirection for PowerShell
+ * Fix #3214: Treat an empty password as a fatal error for repository init
+ * Fix #3267: `copy` failed to copy snapshots in rare cases
+ * Fix #3184: `backup --quiet` no longer prints status information
+ * Fix #3296: Fix crash of `check --read-data-subset=x%` run for an empty repository
+ * Fix #3302: Fix `fdopendir: not a directory` error for local backend
+ * Fix #3334: Print `created new cache` message only on a terminal
+ * Fix #3380: Fix crash of `backup --exclude='**'`
+ * Fix #3305: Fix possibly missing backup summary of JSON output in case of error
+ * Fix #3439: Correctly handle download errors during `restore`
+ * Chg #3247: Empty files now have size of 0 in `ls --json` output
+ * Enh #2780: Add release binaries for s390x architecture on Linux
+ * Enh #3293: Add `--repository-file2` option to `init` and `copy` command
+ * Enh #3312: Add auto-completion support for fish
+ * Enh #3336: SFTP backend now checks for disk space
+ * Enh #3377: Add release binaries for Apple Silicon
+ * Enh #3414: Add `--keep-within-hourly` option to restic forget
+ * Enh #3456: Support filtering and specifying untagged snapshots
+ * Enh #3167: Allow specifying limit of `snapshots` list
+ * Enh #3426: Optimize read performance of mount command
+ * Enh #3427: `find --pack` fallback to index if data file is missing
+
+Details
+-------
+
+ * Bugfix #2742: Improve error handling for rclone and REST backend over HTTP2
+
+   When retrieving data from the rclone / REST backend while also using HTTP2 restic did not detect
+   when no data was returned at all. This could cause for example the `check` command to report the
+   following error:
+
+   Pack ID does not match, want [...], got e3b0c442
+
+   This has been fixed by correctly detecting and retrying the incomplete download.
+
+   https://github.com/restic/restic/issues/2742
+   https://github.com/restic/restic/pull/3453
+   https://forum.restic.net/t/http2-stream-closed-connection-reset-context-canceled/3743/10
+
+ * Bugfix #3111: Fix terminal output redirection for PowerShell
+
+   When redirecting the output of restic using PowerShell on Windows, the output contained
+   terminal escape characters. This has been fixed by properly detecting the terminal type.
+
+   In addition, the mintty terminal now shows progress output for the backup command.
+
+   https://github.com/restic/restic/issues/3111
+   https://github.com/restic/restic/pull/3325
+
+ * Bugfix #3214: Treat an empty password as a fatal error for repository init
+
+   When attempting to initialize a new repository, if an empty password was supplied, the
+   repository would be created but the init command would return an error with a stack trace. Now,
+   if an empty password is provided, it is treated as a fatal error, and no repository is created.
+
+   https://github.com/restic/restic/issues/3214
+   https://github.com/restic/restic/pull/3283
+
+ * Bugfix #3267: `copy` failed to copy snapshots in rare cases
+
+   The `copy` command could in rare cases fail with the error message `SaveTree(...) returned
+   unexpected id ...`. This has been fixed.
+
+   On Linux/BSDs, the error could be caused by backing up symlinks with non-UTF-8 target paths.
+   Note that, due to limitations in the repository format, these are not stored properly and
+   should be avoided if possible.
+
+   https://github.com/restic/restic/issues/3267
+   https://github.com/restic/restic/pull/3310
+
+ * Bugfix #3184: `backup --quiet` no longer prints status information
+
+   A regression in the latest restic version caused the output of `backup --quiet` to contain
+   large amounts of backup progress information when run using an interactive terminal. This is
+   fixed now.
+
+   A workaround for this bug is to run restic as follows: `restic backup --quiet [..] | cat -`.
+
+   https://github.com/restic/restic/issues/3184
+   https://github.com/restic/restic/pull/3186
+
+ * Bugfix #3296: Fix crash of `check --read-data-subset=x%` run for an empty repository
+
+   The command `restic check --read-data-subset=x%` crashed when run for an empty repository.
+   This has been fixed.
+
+   https://github.com/restic/restic/issues/3296
+   https://github.com/restic/restic/pull/3309
+
+ * Bugfix #3302: Fix `fdopendir: not a directory` error for local backend
+
+   The `check`, `list packs`, `prune` and `rebuild-index` commands failed for the local backend
+   when the `data` folder in the repository contained files. This has been fixed.
+
+   https://github.com/restic/restic/issues/3302
+   https://github.com/restic/restic/pull/3308
+
+ * Bugfix #3334: Print `created new cache` message only on a terminal
+
+   The message `created new cache` was printed even when the output wasn't a terminal. That broke
+   piping `restic dump` output to tar or zip if cache directory didn't exist. The message is now
+   only printed on a terminal.
+
+   https://github.com/restic/restic/issues/3334
+   https://github.com/restic/restic/pull/3343
+
+ * Bugfix #3380: Fix crash of `backup --exclude='**'`
+
+   The exclude filter `**`, which excludes all files, caused restic to crash. This has been
+   corrected.
+
+   https://github.com/restic/restic/issues/3380
+   https://github.com/restic/restic/pull/3393
+
+ * Bugfix #3305: Fix possibly missing backup summary of JSON output in case of error
+
+   When using `--json` output it happened from time to time that the summary output was missing in
+   case an error occurred. This has been fixed.
+
+   https://github.com/restic/restic/pull/3305
+
+ * Bugfix #3439: Correctly handle download errors during `restore`
+
+   Due to a regression in restic 0.12.0, the `restore` command in some cases did not retry download
+   errors and only printed a warning. This has been fixed by retrying incomplete data downloads.
+
+   https://github.com/restic/restic/issues/3439
+   https://github.com/restic/restic/pull/3449
+
+ * Change #3247: Empty files now have size of 0 in `ls --json` output
+
+   The `ls --json` command used to omit the sizes of empty files in its output. It now reports a size
+   of zero explicitly for regular files, while omitting the size field for all other types.
+
+   https://github.com/restic/restic/issues/3247
+   https://github.com/restic/restic/pull/3257
+
+ * Enhancement #2780: Add release binaries for s390x architecture on Linux
+
+   We've added release binaries for Linux using the s390x architecture.
+
+   https://github.com/restic/restic/issues/2780
+   https://github.com/restic/restic/pull/3452
+
+ * Enhancement #3293: Add `--repository-file2` option to `init` and `copy` command
+
+   The `init` and `copy` command can now be used with the `--repository-file2` option or the
+   `$RESTIC_REPOSITORY_FILE2` environment variable. These to options are in addition to the
+   `--repo2` flag and allow you to read the destination repository from a file.
+
+   Using both `--repository-file` and `--repo2` options resulted in an error for the `copy` or
+   `init` command. The handling of this combination of options has been fixed. A workaround for
+   this issue is to only use `--repo` or `-r` and `--repo2` for `init` or `copy`.
+
+   https://github.com/restic/restic/issues/3293
+   https://github.com/restic/restic/pull/3294
+
+ * Enhancement #3312: Add auto-completion support for fish
+
+   The `generate` command now supports fish auto completion.
+
+   https://github.com/restic/restic/pull/3312
+
+ * Enhancement #3336: SFTP backend now checks for disk space
+
+   Backing up over SFTP previously spewed multiple generic "failure" messages when the remote
+   disk was full. It now checks for disk space before writing a file and fails immediately with a "no
+   space left on device" message.
+
+   https://github.com/restic/restic/issues/3336
+   https://github.com/restic/restic/pull/3345
+
+ * Enhancement #3377: Add release binaries for Apple Silicon
+
+   We've added release binaries for macOS on Apple Silicon (M1).
+
+   https://github.com/restic/restic/issues/3377
+   https://github.com/restic/restic/pull/3394
+
+ * Enhancement #3414: Add `--keep-within-hourly` option to restic forget
+
+   The `forget` command allowed keeping a given number of hourly backups or to keep all backups
+   within a given interval, but it was not possible to specify keeping hourly backups within a
+   given interval.
+
+   The new `--keep-within-hourly` option now offers this functionality. Similar options for
+   daily/weekly/monthly/yearly are also implemented, the new options are:
+
+   --keep-within-hourly <1y2m3d4h> --keep-within-daily <1y2m3d4h> --keep-within-weekly
+   <1y2m3d4h> --keep-within-monthly <1y2m3d4h> --keep-within-yearly <1y2m3d4h>
+
+   https://github.com/restic/restic/issues/3414
+   https://github.com/restic/restic/pull/3416
+   https://forum.restic.net/t/forget-policy/4014/11
+
+ * Enhancement #3456: Support filtering and specifying untagged snapshots
+
+   It was previously not possible to specify an empty tag with the `--tag` and `--keep-tag`
+   options. This has now been fixed, such that `--tag ''` and `--keep-tag ''` now matches
+   snapshots without tags. This allows e.g. the `snapshots` and `forget` commands to only
+   operate on untagged snapshots.
+
+   https://github.com/restic/restic/issues/3456
+   https://github.com/restic/restic/pull/3457
+
+ * Enhancement #3167: Allow specifying limit of `snapshots` list
+
+   The `--last` option allowed limiting the output of the `snapshots` command to the latest
+   snapshot for each host. The new `--latest n` option allows limiting the output to the latest `n`
+   snapshots.
+
+   This change deprecates the option `--last` in favour of `--latest 1`.
+
+   https://github.com/restic/restic/pull/3167
+
+ * Enhancement #3426: Optimize read performance of mount command
+
+   Reading large files in a mounted repository may be up to five times faster. This improvement
+   primarily applies to repositories stored at a backend that can be accessed with low latency,
+   like e.g. the local backend.
+
+   https://github.com/restic/restic/pull/3426
+
+ * Enhancement #3427: `find --pack` fallback to index if data file is missing
+
+   When investigating a repository with missing data files, it might be useful to determine
+   affected snapshots before running `rebuild-index`. Previously, `find --pack pack-id`
+   returned no data as it required accessing the data file. Now, if the necessary data is still
+   available in the repository index, it gets retrieved from there.
+
+   The command now also supports looking up multiple pack files in a single `find` run.
+
+   https://github.com/restic/restic/pull/3427
+   https://forum.restic.net/t/missing-packs-not-found/2600
+
+
+Changelog for restic 0.12.0 (2021-02-14)
+=======================================
+
+The following sections list the changes in restic 0.12.0 relevant to
+restic users. The changes are ordered by importance.
+
+Summary
+-------
+
+ * Fix #1681: Make `mount` not create missing mount point directory
+ * Fix #1800: Ignore `no data available` filesystem error during backup
+ * Fix #2563: Report the correct owner of directories in FUSE mounts
+ * Fix #2688: Make `backup` and `tag` commands separate tags by comma
+ * Fix #2739: Make the `cat` command respect the `--no-lock` option
+ * Fix #3087: The `--use-fs-snapshot` option now works on windows/386
+ * Fix #3100: Do not require gs bucket permissions when running `init`
+ * Fix #3111: Correctly detect output redirection for `backup` command on Windows
+ * Fix #3151: Don't create invalid snapshots when `backup` is interrupted
+ * Fix #3166: Improve error handling in the `restore` command
+ * Fix #3232: Correct statistics for overlapping targets
+ * Fix #3014: Fix sporadic stream reset between rclone and restic
+ * Fix #3152: Do not hang until foregrounded when completed in background
+ * Fix #3249: Improve error handling in `gs` backend
+ * Chg #3095: Deleting files on Google Drive now moves them to the trash
+ * Enh #2186: Allow specifying percentage in `check --read-data-subset`
+ * Enh #2453: Report permanent/fatal backend errors earlier
+ * Enh #2528: Add Alibaba/Aliyun OSS support in the `s3` backend
+ * Enh #2706: Configurable progress reports for non-interactive terminals
+ * Enh #2944: Add `backup` options `--files-from-{verbatim,raw}`
+ * Enh #3083: Allow usage of deprecated S3 `ListObjects` API
+ * Enh #3147: Support additional environment variables for Swift authentication
+ * Enh #3191: Add release binaries for MIPS architectures
+ * Enh #909: Back up mountpoints as empty directories
+ * Enh #3250: Add several more error checks
+ * Enh #2718: Improve `prune` performance and make it more customizable
+ * Enh #2495: Add option to let `backup` trust mtime without checking ctime
+ * Enh #2941: Speed up the repacking step of the `prune` command
+ * Enh #3006: Speed up the `rebuild-index` command
+ * Enh #3048: Add more checks for index and pack files in the `check` command
+ * Enh #2433: Make the `dump` command support `zip` format
+ * Enh #3099: Reduce memory usage of `check` command
+ * Enh #3106: Parallelize scan of snapshot content in `copy` and `prune`
+ * Enh #3130: Parallelize reading of locks and snapshots
+ * Enh #3254: Enable HTTP/2 for backend connections
+
+Details
+-------
+
+ * Bugfix #1681: Make `mount` not create missing mount point directory
+
+   When specifying a non-existent directory as mount point for the `mount` command, restic used
+   to create the specified directory automatically.
+
+   This has now changed such that restic instead gives an error when the specified directory for
+   the mount point does not exist.
+
+   https://github.com/restic/restic/issues/1681
+   https://github.com/restic/restic/pull/3008
+
+ * Bugfix #1800: Ignore `no data available` filesystem error during backup
+
+   Restic was unable to backup files on some filesystems, for example certain configurations of
+   CIFS on Linux which return a `no data available` error when reading extended attributes. These
+   errors are now ignored.
+
+   https://github.com/restic/restic/issues/1800
+   https://github.com/restic/restic/pull/3034
+
+ * Bugfix #2563: Report the correct owner of directories in FUSE mounts
+
+   Restic 0.10.0 changed the FUSE mount to always report the current user as the owner of
+   directories within the FUSE mount, which is incorrect.
+
+   This is now changed back to reporting the correct owner of a directory.
+
+   https://github.com/restic/restic/issues/2563
+   https://github.com/restic/restic/pull/3141
+
+ * Bugfix #2688: Make `backup` and `tag` commands separate tags by comma
+
+   Running `restic backup --tag foo,bar` previously created snapshots with one single tag
+   containing a comma (`foo,bar`) instead of two tags (`foo`, `bar`).
+
+   Similarly, the `tag` command's `--set`, `--add` and `--remove` options would treat
+   `foo,bar` as one tag instead of two tags. This was inconsistent with other commands and often
+   unexpected when one intended `foo,bar` to mean two tags.
+
+   To be consistent in all commands, restic now interprets `foo,bar` to mean two separate tags
+   (`foo` and `bar`) instead of one tag (`foo,bar`) everywhere, including in the `backup` and
+   `tag` commands.
+
+   NOTE: This change might result in unexpected behavior in cases where you use the `forget`
+   command and filter on tags like `foo,bar`. Snapshots previously backed up with `--tag
+   foo,bar` will still not match that filter, but snapshots saved from now on will match that
+   filter.
+
+   To replace `foo,bar` tags with `foo` and `bar` tags in old snapshots, you can first generate a
+   list of the relevant snapshots using a command like:
+
+   Restic snapshots --json --quiet | jq '.[] | select(contains({tags: ["foo,bar"]})) | .id'
+
+   And then use `restic tag --set foo --set bar snapshotID [...]` to set the new tags. Please adjust
+   the commands to include real tag names and any additional tags, as well as the list of snapshots
+   to process.
+
+   https://github.com/restic/restic/issues/2688
+   https://github.com/restic/restic/pull/2690
+   https://github.com/restic/restic/pull/3197
+
+ * Bugfix #2739: Make the `cat` command respect the `--no-lock` option
+
+   The `cat` command would not respect the `--no-lock` flag. This is now fixed.
+
+   https://github.com/restic/restic/issues/2739
+
+ * Bugfix #3087: The `--use-fs-snapshot` option now works on windows/386
+
+   Restic failed to create VSS snapshots on windows/386 with the following error:
+
+   GetSnapshotProperties() failed: E_INVALIDARG (0x80070057)
+
+   This is now fixed.
+
+   https://github.com/restic/restic/issues/3087
+   https://github.com/restic/restic/pull/3090
+
+ * Bugfix #3100: Do not require gs bucket permissions when running `init`
+
+   Restic used to require bucket level permissions for the `gs` backend in order to initialize a
+   restic repository.
+
+   It now allows a `gs` service account to initialize a repository if the bucket does exist and the
+   service account has permissions to write/read to that bucket.
+
+   https://github.com/restic/restic/issues/3100
+
+ * Bugfix #3111: Correctly detect output redirection for `backup` command on Windows
+
+   On Windows, since restic 0.10.0 the `backup` command did not properly detect when the output
+   was redirected to a file. This caused restic to output terminal control characters. This has
+   been fixed by correcting the terminal detection.
+
+   https://github.com/restic/restic/issues/3111
+   https://github.com/restic/restic/pull/3150
+
+ * Bugfix #3151: Don't create invalid snapshots when `backup` is interrupted
+
+   When canceling a backup run at a certain moment it was possible that restic created a snapshot
+   with an invalid "null" tree. This caused `check` and other operations to fail. The `backup`
+   command now properly handles interruptions and never saves a snapshot when interrupted.
+
+   https://github.com/restic/restic/issues/3151
+   https://github.com/restic/restic/pull/3164
+
+ * Bugfix #3166: Improve error handling in the `restore` command
+
+   The `restore` command used to not print errors while downloading file contents from the
+   repository. It also incorrectly exited with a zero error code even when there were errors
+   during the restore process. This has all been fixed and `restore` now returns with a non-zero
+   exit code when there's an error.
+
+   https://github.com/restic/restic/issues/3166
+   https://github.com/restic/restic/pull/3207
+
+ * Bugfix #3232: Correct statistics for overlapping targets
+
+   A user reported that restic's statistics and progress information during backup was not
+   correctly calculated when the backup targets (files/dirs to save) overlap. For example,
+   consider a directory `foo` which contains (among others) a file `foo/bar`. When `restic
+   backup foo foo/bar` was run, restic counted the size of the file `foo/bar` twice, so the
+   completeness percentage as well as the number of files was wrong. This is now corrected.
+
+   https://github.com/restic/restic/issues/3232
+   https://github.com/restic/restic/pull/3243
+
+ * Bugfix #3014: Fix sporadic stream reset between rclone and restic
+
+   Sometimes when using restic with the `rclone` backend, an error message similar to the
+   following would be printed:
+
+   Didn't finish writing GET request (wrote 0/xxx): http2: stream closed
+
+   It was found that this was caused by restic closing the connection to rclone to soon when
+   downloading data. A workaround has been added which waits for the end of the download before
+   closing the connection.
+
+   https://github.com/rclone/rclone/issues/2598
+   https://github.com/restic/restic/pull/3014
+
+ * Bugfix #3152: Do not hang until foregrounded when completed in background
+
+   On Linux, when running in the background restic failed to stop the terminal output of the
+   `backup` command after it had completed. This caused restic to hang until moved to the
+   foreground. This has now been fixed.
+
+   https://github.com/restic/restic/pull/3152
+   https://forum.restic.net/t/restic-alpine-container-cron-hangs-epoll-pwait/3334
+
+ * Bugfix #3249: Improve error handling in `gs` backend
+
+   The `gs` backend did not notice when the last step of completing a file upload failed. Under rare
+   circumstances, this could cause missing files in the backup repository. This has now been
+   fixed.
+
+   https://github.com/restic/restic/pull/3249
+
+ * Change #3095: Deleting files on Google Drive now moves them to the trash
+
+   When deleting files on Google Drive via the `rclone` backend, restic used to bypass the trash
+   folder required that one used the `-o rclone.args` option to enable usage of the trash folder.
+   This ensured that deleted files in Google Drive were not kept indefinitely in the trash folder.
+   However, since Google Drive's trash retention policy changed to deleting trashed files after
+   30 days, this is no longer needed.
+
+   Restic now leaves it up to rclone and its configuration to use or not use the trash folder when
+   deleting files. The default is to use the trash folder, as of rclone 1.53.2. To re-enable the
+   restic 0.11 behavior, set the `RCLONE_DRIVE_USE_TRASH` environment variable or change the
+   rclone configuration. See the rclone documentation for more details.
+
+   https://github.com/restic/restic/issues/3095
+   https://github.com/restic/restic/pull/3102
+
+ * Enhancement #2186: Allow specifying percentage in `check --read-data-subset`
+
+   We've enhanced the `check` command's `--read-data-subset` option to also accept a
+   percentage (e.g. `2.5%` or `10%`). This will check the given percentage of pack files (which
+   are randomly selected on each run).
+
+   https://github.com/restic/restic/issues/2186
+   https://github.com/restic/restic/pull/3038
+
+ * Enhancement #2453: Report permanent/fatal backend errors earlier
+
+   When encountering errors in reading from or writing to storage backends, restic retries the
+   failing operation up to nine times (for a total of ten attempts). It used to retry all backend
+   operations, but now detects some permanent error conditions so that it can report fatal errors
+   earlier.
+
+   Permanent failures include local disks being full, SSH connections dropping and permission
+   errors.
+
+   https://github.com/restic/restic/issues/2453
+   https://github.com/restic/restic/issues/3180
+   https://github.com/restic/restic/pull/3170
+   https://github.com/restic/restic/pull/3181
+
+ * Enhancement #2528: Add Alibaba/Aliyun OSS support in the `s3` backend
+
+   A new extended option `s3.bucket-lookup` has been added to support Alibaba/Aliyun OSS in the
+   `s3` backend. The option can be set to one of the following values:
+
+   - `auto` - Existing behaviour - `dns` - Use DNS style bucket access - `path` - Use path style
+   bucket access
+
+   To make the `s3` backend work with Alibaba/Aliyun OSS you must set `s3.bucket-lookup` to `dns`
+   and set the `s3.region` parameter. For example:
+
+   Restic -o s3.bucket-lookup=dns -o s3.region=oss-eu-west-1 -r
+   s3:https://oss-eu-west-1.aliyuncs.com/bucketname init
+
+   Note that `s3.region` must be set, otherwise the MinIO SDK tries to look it up and it seems that
+   Alibaba doesn't support that properly.
+
+   https://github.com/restic/restic/issues/2528
+   https://github.com/restic/restic/pull/2535
+
+ * Enhancement #2706: Configurable progress reports for non-interactive terminals
+
+   The `backup`, `check` and `prune` commands never printed any progress reports on
+   non-interactive terminals. This behavior is now configurable using the
+   `RESTIC_PROGRESS_FPS` environment variable. Use for example a value of `1` for an update
+   every second, or `0.01666` for an update every minute.
+
+   The `backup` command now also prints the current progress when restic receives a `SIGUSR1`
+   signal.
+
+   Setting the `RESTIC_PROGRESS_FPS` environment variable or sending a `SIGUSR1` signal
+   prints a status report even when `--quiet` was specified.
+
+   https://github.com/restic/restic/issues/2706
+   https://github.com/restic/restic/issues/3194
+   https://github.com/restic/restic/pull/3199
+
+ * Enhancement #2944: Add `backup` options `--files-from-{verbatim,raw}`
+
+   The new `backup` options `--files-from-verbatim` and `--files-from-raw` read a list of
+   files to back up from a file. Unlike the existing `--files-from` option, these options do not
+   interpret the listed filenames as glob patterns; instead, whitespace in filenames is
+   preserved as-is and no pattern expansion is done. Please see the documentation for specifics.
+
+   These new options are highly recommended over `--files-from`, when using a script to generate
+   the list of files to back up.
+
+   https://github.com/restic/restic/issues/2944
+   https://github.com/restic/restic/issues/3013
+
+ * Enhancement #3083: Allow usage of deprecated S3 `ListObjects` API
+
+   Some S3 API implementations, e.g. Ceph before version 14.2.5, have a broken `ListObjectsV2`
+   implementation which causes problems for restic when using their API endpoints. When a broken
+   server implementation is used, restic prints errors similar to the following:
+
+   List() returned error: Truncated response should have continuation token set
+
+   As a temporary workaround, restic now allows using the older `ListObjects` endpoint by
+   setting the `s3.list-objects-v1` extended option, for instance:
+
+   Restic -o s3.list-objects-v1=true snapshots
+
+   Please note that this option may be removed in future versions of restic.
+
+   https://github.com/restic/restic/issues/3083
+   https://github.com/restic/restic/pull/3085
+
+ * Enhancement #3147: Support additional environment variables for Swift authentication
+
+   The `swift` backend now supports the following additional environment variables for passing
+   authentication details to restic: `OS_USER_ID`, `OS_USER_DOMAIN_ID`,
+   `OS_PROJECT_DOMAIN_ID` and `OS_TRUST_ID`
+
+   Depending on the `openrc` configuration file these might be required when the user and project
+   domains differ from one another.
+
+   https://github.com/restic/restic/issues/3147
+   https://github.com/restic/restic/pull/3158
+
+ * Enhancement #3191: Add release binaries for MIPS architectures
+
+   We've added a few new architectures for Linux to the release binaries: `mips`, `mipsle`,
+   `mips64`, and `mip64le`. MIPS is mostly used for low-end embedded systems.
+
+   https://github.com/restic/restic/issues/3191
+   https://github.com/restic/restic/pull/3208
+
+ * Enhancement #909: Back up mountpoints as empty directories
+
+   When the `--one-file-system` option is specified to `restic backup`, it ignores all file
+   systems mounted below one of the target directories. This means that when a snapshot is
+   restored, users needed to manually recreate the mountpoint directories.
+
+   Restic now backs up mountpoints as empty directories and therefore implements the same
+   approach as `tar`.
+
+   https://github.com/restic/restic/issues/909
+   https://github.com/restic/restic/pull/3119
+
+ * Enhancement #3250: Add several more error checks
+
+   We've added a lot more error checks in places where errors were previously ignored (as hinted by
+   the static analysis program `errcheck` via `golangci-lint`).
+
+   https://github.com/restic/restic/pull/3250
+
+ * Enhancement #2718: Improve `prune` performance and make it more customizable
+
+   The `prune` command is now much faster. This is especially the case for remote repositories or
+   repositories with not much data to remove. Also the memory usage of the `prune` command is now
+   reduced.
+
+   Restic used to rebuild the index from scratch after pruning. This could lead to missing packs in
+   the index in some cases for eventually consistent backends such as e.g. AWS S3. This behavior is
+   now changed and the index rebuilding uses the information already known by `prune`.
+
+   By default, the `prune` command no longer removes all unused data. This behavior can be
+   fine-tuned by new options, like the acceptable amount of unused space or the maximum size of
+   data to reorganize. For more details, please see
+   https://restic.readthedocs.io/en/stable/060_forget.html .
+
+   Moreover, `prune` now accepts the `--dry-run` option and also running `forget --dry-run
+   --prune` will show what `prune` would do.
+
+   This enhancement also fixes several open issues, e.g.: -
+   https://github.com/restic/restic/issues/1140 -
+   https://github.com/restic/restic/issues/1599 -
+   https://github.com/restic/restic/issues/1985 -
+   https://github.com/restic/restic/issues/2112 -
+   https://github.com/restic/restic/issues/2227 -
+   https://github.com/restic/restic/issues/2305
+
+   https://github.com/restic/restic/pull/2718
+   https://github.com/restic/restic/pull/2842
+
+ * Enhancement #2495: Add option to let `backup` trust mtime without checking ctime
+
+   The `backup` command used to require that both `ctime` and `mtime` of a file matched with a
+   previously backed up version to determine that the file was unchanged. In other words, if
+   either `ctime` or `mtime` of the file had changed, it would be considered changed and restic
+   would read the file's content again to back up the relevant (changed) parts of it.
+
+   The new option `--ignore-ctime` makes restic look at `mtime` only, such that `ctime` changes
+   for a file does not cause restic to read the file's contents again.
+
+   The check for both `ctime` and `mtime` was introduced in restic 0.9.6 to make backups more
+   reliable in the face of programs that reset `mtime` (some Unix archivers do that), but it turned
+   out to often be expensive because it made restic read file contents even if only the metadata
+   (owner, permissions) of a file had changed. The new `--ignore-ctime` option lets the user
+   restore the 0.9.5 behavior when needed. The existing `--ignore-inode` option already turned
+   off this behavior, but also removed a different check.
+
+   Please note that changes in files' metadata are still recorded, regardless of the command line
+   options provided to the backup command.
+
+   https://github.com/restic/restic/issues/2495
+   https://github.com/restic/restic/issues/2558
+   https://github.com/restic/restic/issues/2819
+   https://github.com/restic/restic/pull/2823
+
+ * Enhancement #2941: Speed up the repacking step of the `prune` command
+
+   The repack step of the `prune` command, which moves still used file parts into new pack files
+   such that the old ones can be garbage collected later on, now processes multiple pack files in
+   parallel. This is especially beneficial for high latency backends or when using a fast network
+   connection.
+
+   https://github.com/restic/restic/pull/2941
+
+ * Enhancement #3006: Speed up the `rebuild-index` command
+
+   We've optimized the `rebuild-index` command. Now, existing index entries are used to
+   minimize the number of pack files that must be read. This speeds up the index rebuild a lot.
+
+   Additionally, the option `--read-all-packs` has been added, implementing the previous
+   behavior.
+
+   https://github.com/restic/restic/pull/3006
+   https://github.com/restic/restic/issue/2547
+
+ * Enhancement #3048: Add more checks for index and pack files in the `check` command
+
+   The `check` command run with the `--read-data` or `--read-data-subset` options used to only
+   verify only the pack file content - it did not check if the blobs within the pack are correctly
+   contained in the index.
+
+   A check for the latter is now in place, which can print the following error:
+
+   Blob ID is not contained in index or position is incorrect
+
+   Another test is also added, which compares pack file sizes computed from the index and the pack
+   header with the actual file size. This test is able to detect truncated pack files.
+
+   If the index is not correct, it can be rebuilt by using the `rebuild-index` command.
+
+   Having added these tests, `restic check` is now able to detect non-existing blobs which are
+   wrongly referenced in the index. This situation could have lead to missing data.
+
+   https://github.com/restic/restic/pull/3048
+   https://github.com/restic/restic/pull/3082
+
+ * Enhancement #2433: Make the `dump` command support `zip` format
+
+   Previously, restic could dump the contents of a whole folder structure only in the `tar`
+   format. The `dump` command now has a new flag to change output format to `zip`. Just pass
+   `--archive zip` as an option to `restic dump`.
+
+   https://github.com/restic/restic/pull/2433
+   https://github.com/restic/restic/pull/3081
+
+ * Enhancement #3099: Reduce memory usage of `check` command
+
+   The `check` command now requires less memory if it is run without the `--check-unused` option.
+
+   https://github.com/restic/restic/pull/3099
+
+ * Enhancement #3106: Parallelize scan of snapshot content in `copy` and `prune`
+
+   The `copy` and `prune` commands used to traverse the directories of snapshots one by one to find
+   used data. This snapshot traversal is now parallized which can speed up this step several
+   times.
+
+   In addition the `check` command now reports how many snapshots have already been processed.
+
+   https://github.com/restic/restic/pull/3106
+
+ * Enhancement #3130: Parallelize reading of locks and snapshots
+
+   Restic used to read snapshots sequentially. For repositories containing many snapshots this
+   slowed down commands which have to read all snapshots.
+
+   Now the reading of snapshots is parallelized. This speeds up for example `prune`, `backup` and
+   other commands that search for snapshots with certain properties or which have to find the
+   `latest` snapshot.
+
+   The speed up also applies to locks stored in the backup repository.
+
+   https://github.com/restic/restic/pull/3130
+   https://github.com/restic/restic/pull/3174
+
+ * Enhancement #3254: Enable HTTP/2 for backend connections
+
+   Go's HTTP library usually automatically chooses between HTTP/1.x and HTTP/2 depending on
+   what the server supports. But for compatibility this mechanism is disabled if DialContext is
+   used (which is the case for restic). This change allows restic's HTTP client to negotiate
+   HTTP/2 if supported by the server.
+
+   https://github.com/restic/restic/pull/3254
+
+
+Changelog for restic 0.11.0 (2020-11-05)
+=======================================
+
+The following sections list the changes in restic 0.11.0 relevant to
+restic users. The changes are ordered by importance.
+
+Summary
+-------
+
+ * Fix #1212: Restore timestamps and permissions on intermediate directories
+ * Fix #1756: Mark repository files as read-only when using the local backend
+ * Fix #2241: Hide password in REST backend repository URLs
+ * Fix #2319: Correctly dump directories into tar files
+ * Fix #2491: Don't require `self-update --output` placeholder file
+ * Fix #2834: Fix rare cases of backup command hanging forever
+ * Fix #2938: Fix manpage formatting
+ * Fix #2942: Make --exclude-larger-than handle disappearing files
+ * Fix #2951: Restic generate, help and self-update no longer check passwords
+ * Fix #2979: Make snapshots --json output [] instead of null when no snapshots
+ * Enh #2969: Optimize check for unchanged files during backup
+ * Enh #340: Add support for Volume Shadow Copy Service (VSS) on Windows
+ * Enh #2849: Authenticate to Google Cloud Storage with access token
+ * Enh #1458: New option --repository-file
+ * Enh #2978: Warn if parent snapshot cannot be loaded during backup
+
+Details
+-------
+
+ * Bugfix #1212: Restore timestamps and permissions on intermediate directories
+
+   When using the `--include` option of the restore command, restic restored timestamps and
+   permissions only on directories selected by the include pattern. Intermediate directories,
+   which are necessary to restore files located in sub- directories, were created with default
+   permissions. We've fixed the restore command to restore timestamps and permissions for these
+   directories as well.
+
+   https://github.com/restic/restic/issues/1212
+   https://github.com/restic/restic/issues/1402
+   https://github.com/restic/restic/pull/2906
+
+ * Bugfix #1756: Mark repository files as read-only when using the local backend
+
+   Files stored in a local repository were marked as writeable on the filesystem for non-Windows
+   systems, which did not prevent accidental file modifications outside of restic. In addition,
+   the local backend did not work with certain filesystems and network mounts which do not permit
+   modifications of file permissions.
+
+   Restic now marks files stored in a local repository as read-only on the filesystem on
+   non-Windows systems. The error handling is improved to support more filesystems.
+
+   https://github.com/restic/restic/issues/1756
+   https://github.com/restic/restic/issues/2157
+   https://github.com/restic/restic/pull/2989
+
+ * Bugfix #2241: Hide password in REST backend repository URLs
+
+   When using a password in the REST backend repository URL, the password could in some cases be
+   included in the output from restic, e.g. when initializing a repo or during an error.
+
+   The password is now replaced with "***" where applicable.
+
+   https://github.com/restic/restic/issues/2241
+   https://github.com/restic/restic/pull/2658
+
+ * Bugfix #2319: Correctly dump directories into tar files
+
+   The dump command previously wrote directories in a tar file in a way which can cause
+   compatibility problems. This caused, for example, 7zip on Windows to not open tar files
+   containing directories. In addition it was not possible to dump directories with extended
+   attributes. These compatibility problems are now corrected.
+
+   In addition, a tar file now includes the name of the owner and group of a file.
+
+   https://github.com/restic/restic/issues/2319
+   https://github.com/restic/restic/pull/3039
+
+ * Bugfix #2491: Don't require `self-update --output` placeholder file
+
+   `restic self-update --output /path/to/new-restic` used to require that new-restic was an
+   existing file, to be overwritten. Now it's possible to download an updated restic binary to a
+   new path, without first having to create a placeholder file.
+
+   https://github.com/restic/restic/issues/2491
+   https://github.com/restic/restic/pull/2937
+
+ * Bugfix #2834: Fix rare cases of backup command hanging forever
+
+   We've fixed an issue with the backup progress reporting which could cause restic to hang
+   forever right before finishing a backup.
+
+   https://github.com/restic/restic/issues/2834
+   https://github.com/restic/restic/pull/2963
+
+ * Bugfix #2938: Fix manpage formatting
+
+   The manpage formatting in restic v0.10.0 was garbled, which is fixed now.
+
+   https://github.com/restic/restic/issues/2938
+   https://github.com/restic/restic/pull/2977
+
+ * Bugfix #2942: Make --exclude-larger-than handle disappearing files
+
+   There was a small bug in the backup command's --exclude-larger-than option where files that
+   disappeared between scanning and actually backing them up to the repository caused a panic.
+   This is now fixed.
+
+   https://github.com/restic/restic/issues/2942
+
+ * Bugfix #2951: Restic generate, help and self-update no longer check passwords
+
+   The commands `restic cache`, `generate`, `help` and `self-update` don't need passwords, but
+   they previously did run the RESTIC_PASSWORD_COMMAND (if set in the environment), prompting
+   users to authenticate for no reason. They now skip running the password command.
+
+   https://github.com/restic/restic/issues/2951
+   https://github.com/restic/restic/pull/2987
+
+ * Bugfix #2979: Make snapshots --json output [] instead of null when no snapshots
+
+   Restic previously output `null` instead of `[]` for the `--json snapshots` command, when
+   there were no snapshots in the repository. This caused some minor problems when parsing the
+   output, but is now fixed such that `[]` is output when the list of snapshots is empty.
+
+   https://github.com/restic/restic/issues/2979
+   https://github.com/restic/restic/pull/2984
+
+ * Enhancement #2969: Optimize check for unchanged files during backup
+
+   During a backup restic skips processing files which have not changed since the last backup run.
+   Previously this required opening each file once which can be slow on network filesystems. The
+   backup command now checks for file changes before opening a file. This considerably reduces
+   the time to create a backup on network filesystems.
+
+   https://github.com/restic/restic/issues/2969
+   https://github.com/restic/restic/pull/2970
+
+ * Enhancement #340: Add support for Volume Shadow Copy Service (VSS) on Windows
+
+   Volume Shadow Copy Service allows read access to files that are locked by another process using
+   an exclusive lock through a filesystem snapshot. Restic was unable to backup those files
+   before. This update enables backing up these files.
+
+   This needs to be enabled explicitely using the --use-fs-snapshot option of the backup
+   command.
+
+   https://github.com/restic/restic/issues/340
+   https://github.com/restic/restic/pull/2274
+
+ * Enhancement #2849: Authenticate to Google Cloud Storage with access token
+
+   When using the GCS backend, it is now possible to authenticate with OAuth2 access tokens
+   instead of a credentials file by setting the GOOGLE_ACCESS_TOKEN environment variable.
+
+   https://github.com/restic/restic/pull/2849
+
+ * Enhancement #1458: New option --repository-file
+
+   We've added a new command-line option --repository-file as an alternative to -r. This allows
+   to read the repository URL from a file in order to prevent certain types of information leaks,
+   especially for URLs containing credentials.
+
+   https://github.com/restic/restic/issues/1458
+   https://github.com/restic/restic/issues/2900
+   https://github.com/restic/restic/pull/2910
+
+ * Enhancement #2978: Warn if parent snapshot cannot be loaded during backup
+
+   During a backup restic uses the parent snapshot to check whether a file was changed and has to be
+   backed up again. For this check the backup has to read the directories contained in the old
+   snapshot. If a tree blob cannot be loaded, restic now warns about this problem with the backup
+   repository.
+
+   https://github.com/restic/restic/pull/2978
+
+
 Changelog for restic 0.10.0 (2020-09-19)
 =======================================
 

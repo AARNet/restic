@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 )
@@ -186,34 +187,45 @@ func preCheckChangelogCurrent() {
 	}
 }
 
-func preCheckChangelogRelease() {
+func preCheckChangelogRelease() bool {
 	if opts.IgnoreChangelogReleaseDate {
-		return
+		return true
 	}
 
-	d, err := os.Open("changelog")
-	if err != nil {
-		die("error opening dir: %v", err)
-	}
-
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		_ = d.Close()
-		die("error listing dir: %v", err)
-	}
-
-	err = d.Close()
-	if err != nil {
-		die("error closing dir: %v", err)
-	}
-
-	for _, name := range names {
+	for _, name := range readdir("changelog") {
 		if strings.HasPrefix(name, opts.Version+"_") {
-			return
+			return true
 		}
 	}
 
-	die("unable to find subdir with date for version %v in changelog", opts.Version)
+	return false
+}
+
+func createChangelogRelease() {
+	date := time.Now().Format("2006-01-02")
+	targetDir := filepath.Join("changelog", fmt.Sprintf("%s_%s", opts.Version, date))
+	unreleasedDir := filepath.Join("changelog", "unreleased")
+	mkdir(targetDir)
+
+	for _, name := range readdir(unreleasedDir) {
+		if name == ".gitignore" {
+			continue
+		}
+
+		src := filepath.Join("changelog", "unreleased", name)
+		dest := filepath.Join(targetDir, name)
+
+		err := os.Rename(src, dest)
+		if err != nil {
+			die("rename %v -> %v failed: %w", src, dest, err)
+		}
+	}
+
+	run("git", "add", targetDir)
+	run("git", "add", "-u", unreleasedDir)
+
+	msg := fmt.Sprintf("Prepare changelog for %v", opts.Version)
+	run("git", "commit", "-m", msg, targetDir, unreleasedDir)
 }
 
 func preCheckChangelogVersion() {
@@ -225,7 +237,9 @@ func preCheckChangelogVersion() {
 	if err != nil {
 		die("unable to open CHANGELOG.md: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -276,6 +290,7 @@ func generateFiles() {
 	run("./restic-generate.temp", "generate",
 		"--man", "doc/man",
 		"--zsh-completion", "doc/zsh-completion.zsh",
+		"--fish-completion", "doc/fish-completion.fish",
 		"--bash-completion", "doc/bash-completion.sh")
 	rm("restic-generate.temp")
 
@@ -425,7 +440,9 @@ func main() {
 	preCheckUncommittedChanges()
 	preCheckVersionExists()
 	preCheckDockerBuilderGoVersion()
-	preCheckChangelogRelease()
+	if !preCheckChangelogRelease() {
+		createChangelogRelease()
+	}
 	preCheckChangelogCurrent()
 	preCheckChangelogVersion()
 
@@ -457,5 +474,5 @@ func main() {
 
 	msg("done, output dir is %v", opts.OutputDir)
 
-	msg("now run:\n\ngit push --tags origin master\ndocker push restic/restic\n")
+	msg("now run:\n\ngit push --tags origin master\ndocker push restic/restic:latest\ndocker push restic/restic:%s\n", opts.Version)
 }

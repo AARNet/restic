@@ -36,16 +36,17 @@ func newPack(t testing.TB, k *crypto.Key, lengths []int) ([]Buf, []byte, uint) {
 	}
 
 	// pack blobs
-	p := pack.NewPacker(k, new(bytes.Buffer))
+	var buf bytes.Buffer
+	p := pack.NewPacker(k, &buf)
 	for _, b := range bufs {
-		p.Add(restic.TreeBlob, b.id, b.data)
+		_, err := p.Add(restic.TreeBlob, b.id, b.data)
+		rtest.OK(t, err)
 	}
 
 	_, err := p.Finalize()
 	rtest.OK(t, err)
 
-	packData := p.Writer().(*bytes.Buffer).Bytes()
-	return bufs, packData, p.Size()
+	return bufs, buf.Bytes(), p.Size()
 }
 
 func verifyBlobs(t testing.TB, bufs []Buf, k *crypto.Key, rd io.ReaderAt, packSize uint) {
@@ -53,19 +54,18 @@ func verifyBlobs(t testing.TB, bufs []Buf, k *crypto.Key, rd io.ReaderAt, packSi
 	for _, buf := range bufs {
 		written += len(buf.data)
 	}
-	// header length
-	written += binary.Size(uint32(0))
-	// header + header crypto
-	headerSize := len(bufs) * (binary.Size(restic.BlobType(0)) + binary.Size(uint32(0)) + len(restic.ID{}))
-	written += restic.CiphertextLength(headerSize)
+	// header length + header + header crypto
+	headerSize := binary.Size(uint32(0)) + restic.CiphertextLength(len(bufs)*int(pack.EntrySize))
+	written += headerSize
 
 	// check length
 	rtest.Equals(t, uint(written), packSize)
 
 	// read and parse it again
-	entries, err := pack.List(k, rd, int64(packSize))
+	entries, hdrSize, err := pack.List(k, rd, int64(packSize))
 	rtest.OK(t, err)
 	rtest.Equals(t, len(entries), len(bufs))
+	rtest.Equals(t, headerSize, int(hdrSize))
 
 	var buf []byte
 	for i, b := range bufs {
@@ -128,7 +128,7 @@ func TestUnpackReadSeeker(t *testing.T) {
 
 	handle := restic.Handle{Type: restic.PackFile, Name: id.String()}
 	rtest.OK(t, b.Save(context.TODO(), handle, restic.NewByteReader(packData)))
-	verifyBlobs(t, bufs, k, restic.ReaderAt(b, handle), packSize)
+	verifyBlobs(t, bufs, k, restic.ReaderAt(context.TODO(), b, handle), packSize)
 }
 
 func TestShortPack(t *testing.T) {
@@ -141,5 +141,5 @@ func TestShortPack(t *testing.T) {
 
 	handle := restic.Handle{Type: restic.PackFile, Name: id.String()}
 	rtest.OK(t, b.Save(context.TODO(), handle, restic.NewByteReader(packData)))
-	verifyBlobs(t, bufs, k, restic.ReaderAt(b, handle), packSize)
+	verifyBlobs(t, bufs, k, restic.ReaderAt(context.TODO(), b, handle), packSize)
 }

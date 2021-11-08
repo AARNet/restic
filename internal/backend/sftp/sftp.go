@@ -16,6 +16,7 @@ import (
 	"github.com/restic/restic/internal/backend"
 	"github.com/restic/restic/internal/debug"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pkg/sftp"
 )
 
@@ -99,7 +100,7 @@ func (r *SFTP) clientError() error {
 	select {
 	case err := <-r.result:
 		debug.Log("client has exited with err %v", err)
-		return err
+		return backoff.Permanent(err)
 	default:
 	}
 
@@ -109,7 +110,7 @@ func (r *SFTP) clientError() error {
 // Open opens an sftp backend as described by the config by running
 // "ssh" with the appropriate arguments (or cfg.Command, if set). The function
 // preExec is run just before, postExec just after starting a program.
-func Open(cfg Config) (*SFTP, error) {
+func Open(ctx context.Context, cfg Config) (*SFTP, error) {
 	debug.Log("open backend with config %#v", cfg)
 
 	cmd, args, err := buildSSHCommand(cfg)
@@ -123,7 +124,7 @@ func Open(cfg Config) (*SFTP, error) {
 		return nil, err
 	}
 
-	sftp.Layout, err = backend.ParseLayout(sftp, cfg.Layout, defaultLayout, cfg.Path)
+	sftp.Layout, err = backend.ParseLayout(ctx, sftp, cfg.Layout, defaultLayout, cfg.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +153,7 @@ func (r *SFTP) Join(p ...string) string {
 }
 
 // ReadDir returns the entries for a directory.
-func (r *SFTP) ReadDir(dir string) ([]os.FileInfo, error) {
+func (r *SFTP) ReadDir(ctx context.Context, dir string) ([]os.FileInfo, error) {
 	fi, err := r.c.ReadDir(dir)
 
 	// sftp client does not specify dir name on error, so add it here
@@ -164,17 +165,7 @@ func (r *SFTP) ReadDir(dir string) ([]os.FileInfo, error) {
 // IsNotExist returns true if the error is caused by a not existing file.
 func (r *SFTP) IsNotExist(err error) bool {
 	err = errors.Cause(err)
-
-	if os.IsNotExist(err) {
-		return true
-	}
-
-	statusError, ok := err.(*sftp.StatusError)
-	if !ok {
-		return false
-	}
-
-	return statusError.Error() == `sftp: "No such file" (SSH_FX_NO_SUCH_FILE)`
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func buildSSHCommand(cfg Config) (cmd string, args []string, err error) {
@@ -207,7 +198,7 @@ func buildSSHCommand(cfg Config) (cmd string, args []string, err error) {
 // Create creates an sftp backend as described by the config by running "ssh"
 // with the appropriate arguments (or cfg.Command, if set). The function
 // preExec is run just before, postExec just after starting a program.
-func Create(cfg Config) (*SFTP, error) {
+func Create(ctx context.Context, cfg Config) (*SFTP, error) {
 	cmd, args, err := buildSSHCommand(cfg)
 	if err != nil {
 		return nil, err
@@ -219,7 +210,7 @@ func Create(cfg Config) (*SFTP, error) {
 		return nil, err
 	}
 
-	sftp.Layout, err = backend.ParseLayout(sftp, cfg.Layout, defaultLayout, cfg.Path)
+	sftp.Layout, err = backend.ParseLayout(ctx, sftp, cfg.Layout, defaultLayout, cfg.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +232,7 @@ func Create(cfg Config) (*SFTP, error) {
 	}
 
 	// open backend
-	return Open(cfg)
+	return Open(ctx, cfg)
 }
 
 // Location returns this backend's location (the directory name).
@@ -263,10 +254,11 @@ func (r *SFTP) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader
 	}
 
 	if err := h.Valid(); err != nil {
-		return err
+		return backoff.Permanent(err)
 	}
 
 	filename := r.Filename(h)
+	dirname := r.Dirname(h)
 
 	// create new file
 	f, err := r.c.OpenFile(filename, os.O_CREATE|os.O_EXCL|os.O_WRONLY)
@@ -282,23 +274,70 @@ func (r *SFTP) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader
 		}
 	}
 
+	// pkg/sftp doesn't allow creating with a mode.
+	// Chmod while the file is still empty.
+	if err == nil {
+		err = f.Chmod(backend.Modes.File)
+	}
 	if err != nil {
 		return errors.Wrap(err, "OpenFile")
 	}
 
-	// save data
-	_, err = io.Copy(f, rd)
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		// Try not to leave a partial file behind.
+		rmErr := r.c.Remove(f.Name())
+		if rmErr != nil {
+			debug.Log("sftp: failed to remove broken file %v: %v",
+				filename, rmErr)
+		}
+
+		err = r.checkNoSpace(dirname, rd.Length(), err)
+	}()
+
+	// save data, make sure to use the optimized sftp upload method
+	wbytes, err := f.ReadFrom(rd)
 	if err != nil {
 		_ = f.Close()
 		return errors.Wrap(err, "Write")
 	}
 
-	err = f.Close()
-	if err != nil {
-		return errors.Wrap(err, "Close")
+	// sanity check
+	if wbytes != rd.Length() {
+		_ = f.Close()
+		return errors.Errorf("wrote %d bytes instead of the expected %d bytes", wbytes, rd.Length())
 	}
 
-	return errors.Wrap(r.c.Chmod(filename, backend.Modes.File), "Chmod")
+	err = f.Close()
+	return errors.Wrap(err, "Close")
+}
+
+// checkNoSpace checks if err was likely caused by lack of available space
+// on the remote, and if so, makes it permanent.
+func (r *SFTP) checkNoSpace(dir string, size int64, origErr error) error {
+	// The SFTP protocol has a message for ENOSPC,
+	// but pkg/sftp doesn't export it and OpenSSH's sftp-server
+	// sends FX_FAILURE instead.
+
+	e, ok := origErr.(*sftp.StatusError)
+	_, hasExt := r.c.HasExtension("statvfs@openssh.com")
+	if !ok || e.FxCode() != sftp.ErrSSHFxFailure || !hasExt {
+		return origErr
+	}
+
+	fsinfo, err := r.c.StatVFS(dir)
+	if err != nil {
+		debug.Log("sftp: StatVFS returned %v", err)
+		return origErr
+	}
+	if fsinfo.Favail == 0 || fsinfo.FreeSpace() < uint64(size) {
+		err := errors.New("sftp: no space left on device")
+		return backoff.Permanent(err)
+	}
+	return origErr
 }
 
 // Load runs fn with a reader that yields the contents of the file at h at the
@@ -310,7 +349,7 @@ func (r *SFTP) Load(ctx context.Context, h restic.Handle, length int, offset int
 func (r *SFTP) openReader(ctx context.Context, h restic.Handle, length int, offset int64) (io.ReadCloser, error) {
 	debug.Log("Load %v, length %v, offset %v", h, length, offset)
 	if err := h.Valid(); err != nil {
-		return nil, err
+		return nil, backoff.Permanent(err)
 	}
 
 	if offset < 0 {
@@ -331,6 +370,8 @@ func (r *SFTP) openReader(ctx context.Context, h restic.Handle, length int, offs
 	}
 
 	if length > 0 {
+		// unlimited reads usually use io.Copy which needs WriteTo support at the underlying reader
+		// limited reads are usually combined with io.ReadFull which reads all required bytes into a buffer in one go
 		return backend.LimitReadCloser(f, int64(length)), nil
 	}
 
@@ -345,7 +386,7 @@ func (r *SFTP) Stat(ctx context.Context, h restic.Handle) (restic.FileInfo, erro
 	}
 
 	if err := h.Valid(); err != nil {
-		return restic.FileInfo{}, err
+		return restic.FileInfo{}, backoff.Permanent(err)
 	}
 
 	fi, err := r.c.Lstat(r.Filename(h))
@@ -467,8 +508,8 @@ func (r *SFTP) Close() error {
 	return nil
 }
 
-func (r *SFTP) deleteRecursive(name string) error {
-	entries, err := r.ReadDir(name)
+func (r *SFTP) deleteRecursive(ctx context.Context, name string) error {
+	entries, err := r.ReadDir(ctx, name)
 	if err != nil {
 		return errors.Wrap(err, "ReadDir")
 	}
@@ -476,7 +517,7 @@ func (r *SFTP) deleteRecursive(name string) error {
 	for _, fi := range entries {
 		itemName := r.Join(name, fi.Name())
 		if fi.IsDir() {
-			err := r.deleteRecursive(itemName)
+			err := r.deleteRecursive(ctx, itemName)
 			if err != nil {
 				return errors.Wrap(err, "ReadDir")
 			}
@@ -499,6 +540,6 @@ func (r *SFTP) deleteRecursive(name string) error {
 }
 
 // Delete removes all data in the backend.
-func (r *SFTP) Delete(context.Context) error {
-	return r.deleteRecursive(r.p)
+func (r *SFTP) Delete(ctx context.Context) error {
+	return r.deleteRecursive(ctx, r.p)
 }

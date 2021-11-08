@@ -32,6 +32,7 @@ import (
 	"github.com/restic/restic/internal/repository"
 	"github.com/restic/restic/internal/restic"
 	"github.com/restic/restic/internal/textfile"
+	"github.com/restic/restic/internal/ui/termstatus"
 
 	"github.com/restic/restic/internal/errors"
 
@@ -40,7 +41,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-var version = "0.10.0"
+var version = "0.12.1"
 
 // TimeFormat is the format used for all timestamps printed by restic.
 const TimeFormat = "2006-01-02 15:04:05"
@@ -50,6 +51,7 @@ type backendWrapper func(r restic.Backend) (restic.Backend, error)
 // GlobalOptions hold all global options for restic.
 type GlobalOptions struct {
 	Repo            string
+	RepositoryFile  string
 	PasswordFile    string
 	PasswordCommand string
 	KeyHint         string
@@ -72,7 +74,7 @@ type GlobalOptions struct {
 	stdout   io.Writer
 	stderr   io.Writer
 
-	backendTestHook backendWrapper
+	backendTestHook, backendInnerTestHook backendWrapper
 
 	// verbosity is set as follows:
 	//  0 means: don't print any messages except errors, this is used when --quiet is specified
@@ -111,12 +113,13 @@ func init() {
 
 	f := cmdRoot.PersistentFlags()
 	f.StringVarP(&globalOptions.Repo, "repo", "r", os.Getenv("RESTIC_REPOSITORY"), "`repository` to backup to or restore from (default: $RESTIC_REPOSITORY)")
+	f.StringVarP(&globalOptions.RepositoryFile, "repository-file", "", os.Getenv("RESTIC_REPOSITORY_FILE"), "`file` to read the repository location from (default: $RESTIC_REPOSITORY_FILE)")
 	f.StringVarP(&globalOptions.PasswordFile, "password-file", "p", os.Getenv("RESTIC_PASSWORD_FILE"), "`file` to read the repository password from (default: $RESTIC_PASSWORD_FILE)")
 	f.StringVarP(&globalOptions.KeyHint, "key-hint", "", os.Getenv("RESTIC_KEY_HINT"), "`key` ID of key to try decrypting first (default: $RESTIC_KEY_HINT)")
 	f.StringVarP(&globalOptions.PasswordCommand, "password-command", "", os.Getenv("RESTIC_PASSWORD_COMMAND"), "shell `command` to obtain the repository password from (default: $RESTIC_PASSWORD_COMMAND)")
 	f.BoolVarP(&globalOptions.Quiet, "quiet", "q", false, "do not output comprehensive progress report")
-	f.CountVarP(&globalOptions.Verbose, "verbose", "v", "be verbose (specify --verbose multiple times or level --verbose=`n`)")
-	f.BoolVar(&globalOptions.NoLock, "no-lock", false, "do not lock the repo, this allows some operations on read-only repos")
+	f.CountVarP(&globalOptions.Verbose, "verbose", "v", "be verbose (specify multiple times or a level using --verbose=`n`, max level/times is 3)")
+	f.BoolVar(&globalOptions.NoLock, "no-lock", false, "do not lock the repository, this allows some operations on read-only repositories")
 	f.BoolVarP(&globalOptions.JSON, "json", "", false, "set output mode to JSON for commands that support it")
 	f.StringVar(&globalOptions.CacheDir, "cache-dir", "", "set the cache `directory`. (default: use system default cache directory)")
 	f.BoolVar(&globalOptions.NoCache, "no-cache", false, "do not use a local cache")
@@ -127,6 +130,8 @@ func init() {
 	f.IntVar(&globalOptions.LimitDownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
 	f.UintVar(&globalOptions.MinPackSize, "min-packsize", 0, "set min pack size in MiB. (default: $RESTIC_MIN_PACKSIZE or 4)")
 	f.StringSliceVarP(&globalOptions.Options, "option", "o", []string{}, "set extended option (`key=value`, can be specified multiple times)")
+	// Use our "generate" command instead of the cobra provided "completion" command
+	cmdRoot.CompletionOptions.DisableDefaultCmd = true
 
 	//setting default to 0 for these then plugging default values later fixes text output for (default: )
 	if globalOptions.MinPackSize == 0 {
@@ -156,7 +161,13 @@ func stdinIsTerminal() bool {
 }
 
 func stdoutIsTerminal() bool {
-	return terminal.IsTerminal(int(os.Stdout.Fd()))
+	// mintty on windows can use pipes which behave like a posix terminal,
+	// but which are not a terminal handle
+	return terminal.IsTerminal(int(os.Stdout.Fd())) || stdoutCanUpdateStatus()
+}
+
+func stdoutCanUpdateStatus() bool {
+	return termstatus.CanUpdateStatus(os.Stdout.Fd())
 }
 
 func stdoutTerminalWidth() int {
@@ -173,7 +184,7 @@ func stdoutTerminalWidth() int {
 // program execution must revert changes to the terminal configuration itself.
 // The terminal configuration is only restored while reading a password.
 func restoreTerminal() {
-	if !stdoutIsTerminal() {
+	if !terminal.IsTerminal(int(os.Stdout.Fd())) {
 		return
 	}
 
@@ -245,6 +256,13 @@ func Verbosef(format string, args ...interface{}) {
 	}
 }
 
+// Verboseff calls Printf to write the message when the verbosity is >= 2
+func Verboseff(format string, args ...interface{}) {
+	if globalOptions.verbosity >= 2 {
+		Printf(format, args...)
+	}
+}
+
 // PrintProgress wraps fmt.Printf to handle the difference in writing progress
 // information to terminals and non-terminal stdout
 func PrintProgress(format string, args ...interface{}) {
@@ -255,7 +273,7 @@ func PrintProgress(format string, args ...interface{}) {
 	message = fmt.Sprintf(format, args...)
 
 	if !(strings.HasSuffix(message, "\r") || strings.HasSuffix(message, "\n")) {
-		if stdoutIsTerminal() {
+		if stdoutCanUpdateStatus() {
 			carriageControl = "\r"
 		} else {
 			carriageControl = "\n"
@@ -263,7 +281,7 @@ func PrintProgress(format string, args ...interface{}) {
 		message = fmt.Sprintf("%s%s", message, carriageControl)
 	}
 
-	if stdoutIsTerminal() {
+	if stdoutCanUpdateStatus() {
 		message = fmt.Sprintf("%s%s", ClearLine(), message)
 	}
 
@@ -363,7 +381,7 @@ func ReadPassword(opts GlobalOptions, prompt string) (string, error) {
 		password, err = readPasswordTerminal(os.Stdin, os.Stderr, prompt)
 	} else {
 		password, err = readPassword(os.Stdin)
-		Verbosef("read password from stdin\n")
+		Verbosef("reading repository password from stdin\n")
 	}
 
 	if err != nil {
@@ -371,7 +389,7 @@ func ReadPassword(opts GlobalOptions, prompt string) (string, error) {
 	}
 
 	if len(password) == 0 {
-		return "", errors.New("an empty password is not a password")
+		return "", errors.Fatal("an empty password is not a password")
 	}
 
 	return password, nil
@@ -398,15 +416,41 @@ func ReadPasswordTwice(gopts GlobalOptions, prompt1, prompt2 string) (string, er
 	return pw1, nil
 }
 
+func ReadRepo(opts GlobalOptions) (string, error) {
+	if opts.Repo == "" && opts.RepositoryFile == "" {
+		return "", errors.Fatal("Please specify repository location (-r or --repository-file)")
+	}
+
+	repo := opts.Repo
+	if opts.RepositoryFile != "" {
+		if repo != "" {
+			return "", errors.Fatal("Options -r and --repository-file are mutually exclusive, please specify only one")
+		}
+
+		s, err := textfile.Read(opts.RepositoryFile)
+		if os.IsNotExist(errors.Cause(err)) {
+			return "", errors.Fatalf("%s does not exist", opts.RepositoryFile)
+		}
+		if err != nil {
+			return "", err
+		}
+
+		repo = strings.TrimSpace(string(s))
+	}
+
+	return repo, nil
+}
+
 const maxKeys = 20
 
 // OpenRepository reads the password and opens the repository.
 func OpenRepository(opts GlobalOptions) (*repository.Repository, error) {
-	if opts.Repo == "" {
-		return nil, errors.Fatal("Please specify repository location (-r)")
+	repo, err := ReadRepo(opts)
+	if err != nil {
+		return nil, err
 	}
 
-	be, err := open(opts.Repo, opts, opts.extended)
+	be, err := open(repo, opts, opts.extended)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +517,7 @@ func OpenRepository(opts GlobalOptions) (*repository.Repository, error) {
 		return s, nil
 	}
 
-	if c.Created && !opts.JSON {
+	if c.Created && !opts.JSON && stdoutIsTerminal() {
 		Verbosef("created new cache in %v\n", c.Base)
 	}
 
@@ -647,7 +691,7 @@ func parseConfig(loc location.Location, opts options.Options) (interface{}, erro
 
 // Open the backend specified by a location config.
 func open(s string, gopts GlobalOptions, opts options.Options) (restic.Backend, error) {
-	debug.Log("parsing location %v", s)
+	debug.Log("parsing location %v", location.StripPassword(s))
 	loc, err := location.Parse(s)
 	if err != nil {
 		return nil, errors.Fatalf("parsing repository location failed: %v", err)
@@ -675,15 +719,11 @@ func open(s string, gopts GlobalOptions, opts options.Options) (restic.Backend, 
 
 	switch loc.Scheme {
 	case "local":
-		be, err = local.Open(cfg.(local.Config))
-		// wrap the backend in a LimitBackend so that the throughput is limited
-		be = limiter.LimitBackend(be, lim)
+		be, err = local.Open(globalOptions.ctx, cfg.(local.Config))
 	case "sftp":
-		be, err = sftp.Open(cfg.(sftp.Config))
-		// wrap the backend in a LimitBackend so that the throughput is limited
-		be = limiter.LimitBackend(be, lim)
+		be, err = sftp.Open(globalOptions.ctx, cfg.(sftp.Config))
 	case "s3":
-		be, err = s3.Open(cfg.(s3.Config), rt)
+		be, err = s3.Open(globalOptions.ctx, cfg.(s3.Config), rt)
 	case "gs":
 		be, err = gs.Open(cfg.(gs.Config), rt)
 	case "azure":
@@ -702,13 +742,26 @@ func open(s string, gopts GlobalOptions, opts options.Options) (restic.Backend, 
 	}
 
 	if err != nil {
-		return nil, errors.Fatalf("unable to open repo at %v: %v", s, err)
+		return nil, errors.Fatalf("unable to open repo at %v: %v", location.StripPassword(s), err)
+	}
+
+	// wrap backend if a test specified an inner hook
+	if gopts.backendInnerTestHook != nil {
+		be, err = gopts.backendInnerTestHook(be)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if loc.Scheme == "local" || loc.Scheme == "sftp" {
+		// wrap the backend in a LimitBackend so that the throughput is limited
+		be = limiter.LimitBackend(be, lim)
 	}
 
 	// check if config is there
 	fi, err := be.Stat(globalOptions.ctx, restic.Handle{Type: restic.ConfigFile})
 	if err != nil {
-		return nil, errors.Fatalf("unable to open config file: %v\nIs there a repository at the following location?\n%v", err, s)
+		return nil, errors.Fatalf("unable to open config file: %v\nIs there a repository at the following location?\n%v", err, location.StripPassword(s))
 	}
 
 	if fi.Size == 0 {
@@ -742,11 +795,11 @@ func create(s string, opts options.Options) (restic.Backend, error) {
 
 	switch loc.Scheme {
 	case "local":
-		return local.Create(cfg.(local.Config))
+		return local.Create(globalOptions.ctx, cfg.(local.Config))
 	case "sftp":
-		return sftp.Create(cfg.(sftp.Config))
+		return sftp.Create(globalOptions.ctx, cfg.(sftp.Config))
 	case "s3":
-		return s3.Create(cfg.(s3.Config), rt)
+		return s3.Create(globalOptions.ctx, cfg.(s3.Config), rt)
 	case "gs":
 		return gs.Create(cfg.(gs.Config), rt)
 	case "azure":
@@ -756,9 +809,9 @@ func create(s string, opts options.Options) (restic.Backend, error) {
 	case "b2":
 		return b2.Create(globalOptions.ctx, cfg.(b2.Config), rt)
 	case "rest":
-		return rest.Create(cfg.(rest.Config), rt)
+		return rest.Create(globalOptions.ctx, cfg.(rest.Config), rt)
 	case "rclone":
-		return rclone.Open(cfg.(rclone.Config), nil)
+		return rclone.Create(globalOptions.ctx, cfg.(rclone.Config))
 	}
 
 	debug.Log("invalid repository scheme: %v", s)

@@ -42,10 +42,13 @@ func runCat(gopts GlobalOptions, args []string) error {
 		return err
 	}
 
-	lock, err := lockRepo(repo)
-	defer unlockRepo(lock)
-	if err != nil {
-		return err
+	if !gopts.NoLock {
+		lock, err := lockRepo(gopts.ctx, repo)
+		if err != nil {
+			return err
+		}
+
+		defer unlockRepo(lock)
 	}
 
 	tpe := args[0]
@@ -59,14 +62,13 @@ func runCat(gopts GlobalOptions, args []string) error {
 			}
 
 			// find snapshot id with prefix
-			id, err = restic.FindSnapshot(repo, args[1])
+			id, err = restic.FindSnapshot(gopts.ctx, repo, args[1])
 			if err != nil {
 				return errors.Fatalf("could not find snapshot: %v\n", err)
 			}
 		}
 	}
 
-	// handle all types that don't need an index
 	switch tpe {
 	case "config":
 		buf, err := json.MarshalIndent(repo.Config(), "", "  ")
@@ -139,15 +141,7 @@ func runCat(gopts GlobalOptions, args []string) error {
 
 		Println(string(buf))
 		return nil
-	}
 
-	// load index, handle all the other types
-	err = repo.LoadIndex(gopts.ctx)
-	if err != nil {
-		return err
-	}
-
-	switch tpe {
 	case "pack":
 		h := restic.Handle{Type: restic.PackFile, Name: id.String()}
 		buf, err := backend.LoadAll(gopts.ctx, nil, repo.Backend(), h)
@@ -164,8 +158,14 @@ func runCat(gopts GlobalOptions, args []string) error {
 		return err
 
 	case "blob":
+		err = repo.LoadIndex(gopts.ctx)
+		if err != nil {
+			return err
+		}
+
 		for _, t := range []restic.BlobType{restic.DataBlob, restic.TreeBlob} {
-			if !repo.Index().Has(id, t) {
+			bh := restic.BlobHandle{ID: id, Type: t}
+			if !repo.Index().Has(bh) {
 				continue
 			}
 

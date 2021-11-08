@@ -36,7 +36,8 @@ type SnapshotOptions struct {
 	Tags    restic.TagLists
 	Paths   []string
 	Compact bool
-	Last    bool
+	Last    bool // This option should be removed in favour of Latest.
+	Latest  int
 	GroupBy string
 }
 
@@ -47,10 +48,16 @@ func init() {
 
 	f := cmdSnapshots.Flags()
 	f.StringArrayVarP(&snapshotOptions.Hosts, "host", "H", nil, "only consider snapshots for this `host` (can be specified multiple times)")
-	f.Var(&snapshotOptions.Tags, "tag", "only consider snapshots which include this `taglist` (can be specified multiple times)")
+	f.Var(&snapshotOptions.Tags, "tag", "only consider snapshots which include this `taglist` in the format `tag[,tag,...]` (can be specified multiple times)")
 	f.StringArrayVar(&snapshotOptions.Paths, "path", nil, "only consider snapshots for this `path` (can be specified multiple times)")
-	f.BoolVarP(&snapshotOptions.Compact, "compact", "c", false, "use compact format")
+	f.BoolVarP(&snapshotOptions.Compact, "compact", "c", false, "use compact output format")
 	f.BoolVar(&snapshotOptions.Last, "last", false, "only show the last snapshot for each host and path")
+	err := f.MarkDeprecated("last", "use --latest 1")
+	if err != nil {
+		// MarkDeprecated only returns an error when the flag is not found
+		panic(err)
+	}
+	f.IntVar(&snapshotOptions.Latest, "latest", 0, "only show the last `n` snapshots for each host and path")
 	f.StringVarP(&snapshotOptions.GroupBy, "group-by", "g", "", "string for grouping snapshots by host,paths,tags")
 }
 
@@ -61,7 +68,7 @@ func runSnapshots(opts SnapshotOptions, gopts GlobalOptions, args []string) erro
 	}
 
 	if !gopts.NoLock {
-		lock, err := lockRepo(repo)
+		lock, err := lockRepo(gopts.ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
@@ -82,7 +89,11 @@ func runSnapshots(opts SnapshotOptions, gopts GlobalOptions, args []string) erro
 
 	for k, list := range snapshotGroups {
 		if opts.Last {
-			list = FilterLastSnapshots(list)
+			// This branch should be removed in the same time
+			// that --last.
+			list = FilterLastestSnapshots(list, 1)
+		} else if opts.Latest > 0 {
+			list = FilterLastestSnapshots(list, opts.Latest)
 		}
 		sort.Sort(sort.Reverse(list))
 		snapshotGroups[k] = list
@@ -125,21 +136,22 @@ func newFilterLastSnapshotsKey(sn *restic.Snapshot) filterLastSnapshotsKey {
 	return filterLastSnapshotsKey{sn.Hostname, strings.Join(paths, "|")}
 }
 
-// FilterLastSnapshots filters a list of snapshots to only return the last
-// entry for each hostname and path. If the snapshot contains multiple paths,
-// they will be joined and treated as one item.
-func FilterLastSnapshots(list restic.Snapshots) restic.Snapshots {
+// FilterLastestSnapshots filters a list of snapshots to only return
+// the limit last entries for each hostname and path. If the snapshot
+// contains multiple paths, they will be joined and treated as one
+// item.
+func FilterLastestSnapshots(list restic.Snapshots, limit int) restic.Snapshots {
 	// Sort the snapshots so that the newer ones are listed first
 	sort.SliceStable(list, func(i, j int) bool {
 		return list[i].Time.After(list[j].Time)
 	})
 
 	var results restic.Snapshots
-	seen := make(map[filterLastSnapshotsKey]bool)
+	seen := make(map[filterLastSnapshotsKey]int)
 	for _, sn := range list {
 		key := newFilterLastSnapshotsKey(sn)
-		if !seen[key] {
-			seen[key] = true
+		if seen[key] < limit {
+			seen[key]++
 			results = append(results, sn)
 		}
 	}
@@ -243,7 +255,10 @@ func PrintSnapshots(stdout io.Writer, list restic.Snapshots, reasons []restic.Ke
 		}
 	}
 
-	tab.Write(stdout)
+	err := tab.Write(stdout)
+	if err != nil {
+		Warnf("error printing: %v\n", err)
+	}
 }
 
 // PrintSnapshotGroupHeader prints which group of the group-by option the
@@ -298,7 +313,7 @@ type SnapshotGroup struct {
 // printSnapshotsJSON writes the JSON representation of list to stdout.
 func printSnapshotGroupJSON(stdout io.Writer, snGroups map[string]restic.Snapshots, grouped bool) error {
 	if grouped {
-		var snapshotGroups []SnapshotGroup
+		snapshotGroups := []SnapshotGroup{}
 
 		for k, list := range snGroups {
 			var key restic.SnapshotGroupKey
@@ -330,7 +345,7 @@ func printSnapshotGroupJSON(stdout io.Writer, snGroups map[string]restic.Snapsho
 	}
 
 	// Old behavior
-	var snapshots []Snapshot
+	snapshots := []Snapshot{}
 
 	for _, list := range snGroups {
 		for _, sn := range list {

@@ -95,7 +95,9 @@ func Random(seed, count int) []byte {
 func SetupTarTestFixture(t testing.TB, outputDir, tarFile string) {
 	input, err := os.Open(tarFile)
 	OK(t, err)
-	defer input.Close()
+	defer func() {
+		OK(t, input.Close())
+	}()
 
 	var rd io.Reader
 	switch filepath.Ext(tarFile) {
@@ -103,7 +105,9 @@ func SetupTarTestFixture(t testing.TB, outputDir, tarFile string) {
 		r, err := gzip.NewReader(input)
 		OK(t, err)
 
-		defer r.Close()
+		defer func() {
+			OK(t, r.Close())
+		}()
 		rd = r
 	case ".bzip2":
 		rd = bzip2.NewReader(input)
@@ -118,7 +122,10 @@ func SetupTarTestFixture(t testing.TB, outputDir, tarFile string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	OK(t, cmd.Run())
+	err = cmd.Run()
+	if err != nil {
+		t.Fatalf("running command %v %v failed: %v", cmd.Path, cmd.Args, err)
+	}
 }
 
 // Env creates a test environment and extracts the repository fixture.
@@ -200,5 +207,31 @@ func TempDir(t testing.TB) (path string, cleanup func()) {
 		}
 
 		RemoveAll(t, tempdir)
+	}
+}
+
+// Chdir changes the current directory to dest.
+// The function back returns to the previous directory.
+func Chdir(t testing.TB, dest string) (back func()) {
+	t.Helper()
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("chdir to %v", dest)
+	err = os.Chdir(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return func() {
+		t.Helper()
+		t.Logf("chdir back to %v", prev)
+		err = os.Chdir(prev)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

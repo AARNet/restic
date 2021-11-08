@@ -53,11 +53,10 @@ func init() {
 }
 
 func loadSnapshot(ctx context.Context, repo *repository.Repository, desc string) (*restic.Snapshot, error) {
-	id, err := restic.FindSnapshot(repo, desc)
+	id, err := restic.FindSnapshot(ctx, repo, desc)
 	if err != nil {
-		return nil, err
+		return nil, errors.Fatal(err.Error())
 	}
-
 	return restic.LoadSnapshot(ctx, repo, id)
 }
 
@@ -332,7 +331,7 @@ func runDiff(opts DiffOptions, gopts GlobalOptions, args []string) error {
 	}
 
 	if !gopts.NoLock {
-		lock, err := lockRepo(repo)
+		lock, err := lockRepo(ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
@@ -365,6 +364,8 @@ func runDiff(opts DiffOptions, gopts GlobalOptions, args []string) error {
 	}
 
 	stats := NewDiffStats()
+	stats.BlobsBefore.Insert(restic.BlobHandle{Type: restic.TreeBlob, ID: *sn1.Tree})
+	stats.BlobsAfter.Insert(restic.BlobHandle{Type: restic.TreeBlob, ID: *sn2.Tree})
 
 	err = c.diffTree(ctx, stats, "/", *sn1.Tree, *sn2.Tree)
 	if err != nil {

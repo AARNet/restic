@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/restic"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/ncw/swift"
 )
 
@@ -42,13 +44,16 @@ func Open(cfg Config, rt http.RoundTripper) (restic.Backend, error) {
 	be := &beSwift{
 		conn: &swift.Connection{
 			UserName:                    cfg.UserName,
+			UserId:                      cfg.UserID,
 			Domain:                      cfg.Domain,
+			DomainId:                    cfg.DomainID,
 			ApiKey:                      cfg.APIKey,
 			AuthUrl:                     cfg.AuthURL,
 			Region:                      cfg.Region,
 			Tenant:                      cfg.Tenant,
 			TenantId:                    cfg.TenantID,
 			TenantDomain:                cfg.TenantDomain,
+			TenantDomainId:              cfg.TenantDomainID,
 			TrustId:                     cfg.TrustID,
 			StorageUrl:                  cfg.StorageURL,
 			AuthToken:                   cfg.AuthToken,
@@ -119,7 +124,7 @@ func (be *beSwift) Load(ctx context.Context, h restic.Handle, length int, offset
 func (be *beSwift) openReader(ctx context.Context, h restic.Handle, length int, offset int64) (io.ReadCloser, error) {
 	debug.Log("Load %v, length %v, offset %v", h, length, offset)
 	if err := h.Valid(); err != nil {
-		return nil, err
+		return nil, backoff.Permanent(err)
 	}
 
 	if offset < 0 {
@@ -159,7 +164,7 @@ func (be *beSwift) openReader(ctx context.Context, h restic.Handle, length int, 
 // Save stores data in the backend at the handle.
 func (be *beSwift) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader) error {
 	if err := h.Valid(); err != nil {
-		return err
+		return backoff.Permanent(err)
 	}
 
 	objName := be.Filename(h)
@@ -172,7 +177,9 @@ func (be *beSwift) Save(ctx context.Context, h restic.Handle, rd restic.RewindRe
 	encoding := "binary/octet-stream"
 
 	debug.Log("PutObject(%v, %v, %v)", be.container, objName, encoding)
-	_, err := be.conn.ObjectPut(be.container, objName, rd, true, "", encoding, nil)
+	hdr := swift.Headers{"Content-Length": strconv.FormatInt(rd.Length(), 10)}
+	_, err := be.conn.ObjectPut(be.container, objName, rd, true, "", encoding, hdr)
+	// swift does not return the upload length
 	debug.Log("%v, err %#v", objName, err)
 
 	return errors.Wrap(err, "client.PutObject")

@@ -4,7 +4,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/cespare/xxhash"
+	"github.com/cespare/xxhash/v2"
 	"github.com/restic/restic/internal/debug"
 )
 
@@ -97,7 +97,8 @@ func (w *filesWriter) writeToFile(path string, blob []byte, offset int64, create
 	_, err = wr.WriteAt(blob, offset)
 
 	if err != nil {
-		releaseWriter(wr)
+		// ignore subsequent errors
+		_ = releaseWriter(wr)
 		return err
 	}
 
