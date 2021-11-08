@@ -7,17 +7,20 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/context/ctxhttp"
 
+	"github.com/restic/restic/internal/backend"
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/restic"
 
-	"github.com/restic/restic/internal/backend"
+	"github.com/cenkalti/backoff/v4"
 )
 
 // make sure the rest backend implements restic.Backend
@@ -63,13 +66,13 @@ func Open(cfg Config, rt http.RoundTripper) (*Backend, error) {
 }
 
 // Create creates a new REST on server configured in config.
-func Create(cfg Config, rt http.RoundTripper) (*Backend, error) {
+func Create(ctx context.Context, cfg Config, rt http.RoundTripper) (*Backend, error) {
 	be, err := Open(cfg, rt)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = be.Stat(context.TODO(), restic.Handle{Type: restic.ConfigFile})
+	_, err = be.Stat(ctx, restic.Handle{Type: restic.ConfigFile})
 	if err == nil {
 		return nil, errors.Fatal("config file already exists")
 	}
@@ -109,7 +112,7 @@ func (b *Backend) Location() string {
 // Save stores data in the backend at the handle.
 func (b *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader) error {
 	if err := h.Valid(); err != nil {
-		return err
+		return backoff.Permanent(err)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -131,15 +134,10 @@ func (b *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindRea
 	resp, err := ctxhttp.Do(ctx, b.client, req)
 	b.sem.ReleaseToken()
 
+	var cerr error
 	if resp != nil {
-		defer func() {
-			_, _ = io.Copy(ioutil.Discard, resp.Body)
-			e := resp.Body.Close()
-
-			if err == nil {
-				err = errors.Wrap(e, "Close")
-			}
-		}()
+		_, _ = io.Copy(ioutil.Discard, resp.Body)
+		cerr = resp.Body.Close()
 	}
 
 	if err != nil {
@@ -150,7 +148,7 @@ func (b *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindRea
 		return errors.Errorf("server response unexpected: %v (%v)", resp.Status, resp.StatusCode)
 	}
 
-	return nil
+	return errors.Wrap(cerr, "Close")
 }
 
 // ErrIsNotExist is returned whenever the requested file does not exist on the
@@ -173,13 +171,76 @@ func (b *Backend) IsNotExist(err error) bool {
 // Load runs fn with a reader that yields the contents of the file at h at the
 // given offset.
 func (b *Backend) Load(ctx context.Context, h restic.Handle, length int, offset int64, fn func(rd io.Reader) error) error {
-	return backend.DefaultLoad(ctx, h, length, offset, b.openReader, fn)
+	r, err := b.openReader(ctx, h, length, offset)
+	if err != nil {
+		return err
+	}
+	err = fn(r)
+	if err != nil {
+		_ = r.Close() // ignore error here
+		return err
+	}
+
+	// Note: readerat.ReadAt() (the fn) uses io.ReadFull() that doesn't
+	// wait for EOF after reading body. Due to HTTP/2 stream multiplexing
+	// and goroutine timings the EOF frame arrives from server (eg. rclone)
+	// with a delay after reading body. Immediate close might trigger
+	// HTTP/2 stream reset resulting in the *stream closed* error on server,
+	// so we wait for EOF before closing body.
+	var buf [1]byte
+	_, err = r.Read(buf[:])
+	if err == io.EOF {
+		err = nil
+	}
+
+	if e := r.Close(); err == nil {
+		err = e
+	}
+	return err
+}
+
+// checkContentLength returns an error if the server returned a value in the
+// Content-Length header in an HTTP2 connection, but closed the connection
+// before any data was sent.
+//
+// This is a workaround for https://github.com/golang/go/issues/46071
+//
+// See also https://forum.restic.net/t/http2-stream-closed-connection-reset-context-canceled/3743/10
+func checkContentLength(resp *http.Response) error {
+	// the following code is based on
+	// https://github.com/golang/go/blob/b7a85e0003cedb1b48a1fd3ae5b746ec6330102e/src/net/http/h2_bundle.go#L8646
+
+	if resp.ContentLength != 0 {
+		return nil
+	}
+
+	if resp.ProtoMajor != 2 && resp.ProtoMinor != 0 {
+		return nil
+	}
+
+	if len(resp.Header[textproto.CanonicalMIMEHeaderKey("Content-Length")]) != 1 {
+		return nil
+	}
+
+	// make sure that if the server returned a content length and we can
+	// parse it, it is really zero, otherwise return an error
+	contentLength := resp.Header.Get("Content-Length")
+	cl, err := strconv.ParseUint(contentLength, 10, 63)
+	if err != nil {
+		return fmt.Errorf("unable to parse Content-Length %q: %w", contentLength, err)
+	}
+
+	if cl != 0 {
+		return errors.Errorf("unexpected EOF: got 0 instead of %v bytes", cl)
+	}
+
+	return nil
 }
 
 func (b *Backend) openReader(ctx context.Context, h restic.Handle, length int, offset int64) (io.ReadCloser, error) {
 	debug.Log("Load %v, length %v, offset %v", h, length, offset)
 	if err := h.Valid(); err != nil {
-		return nil, err
+		return nil, backoff.Permanent(err)
 	}
 
 	if offset < 0 {
@@ -225,13 +286,21 @@ func (b *Backend) openReader(ctx context.Context, h restic.Handle, length int, o
 		return nil, errors.Errorf("unexpected HTTP response (%v): %v", resp.StatusCode, resp.Status)
 	}
 
+	// workaround https://github.com/golang/go/issues/46071
+	// see also https://forum.restic.net/t/http2-stream-closed-connection-reset-context-canceled/3743/10
+	err = checkContentLength(resp)
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+
 	return resp.Body, nil
 }
 
 // Stat returns information about a blob.
 func (b *Backend) Stat(ctx context.Context, h restic.Handle) (restic.FileInfo, error) {
 	if err := h.Valid(); err != nil {
-		return restic.FileInfo{}, err
+		return restic.FileInfo{}, backoff.Permanent(err)
 	}
 
 	req, err := http.NewRequest(http.MethodHead, b.Filename(h), nil)
@@ -286,7 +355,7 @@ func (b *Backend) Test(ctx context.Context, h restic.Handle) (bool, error) {
 // Remove removes the blob with the given name and type.
 func (b *Backend) Remove(ctx context.Context, h restic.Handle) error {
 	if err := h.Valid(); err != nil {
-		return err
+		return backoff.Permanent(err)
 	}
 
 	req, err := http.NewRequest("DELETE", b.Filename(h), nil)

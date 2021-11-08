@@ -31,14 +31,19 @@ Exit status is 0 if the command was successful, and non-zero if there was any er
 
 // ForgetOptions collects all options for the forget command.
 type ForgetOptions struct {
-	Last     int
-	Hourly   int
-	Daily    int
-	Weekly   int
-	Monthly  int
-	Yearly   int
-	Within   restic.Duration
-	KeepTags restic.TagLists
+	Last          int
+	Hourly        int
+	Daily         int
+	Weekly        int
+	Monthly       int
+	Yearly        int
+	Within        restic.Duration
+	WithinHourly  restic.Duration
+	WithinDaily   restic.Duration
+	WithinWeekly  restic.Duration
+	WithinMonthly restic.Duration
+	WithinYearly  restic.Duration
+	KeepTags      restic.TagLists
 
 	Hosts   []string
 	Tags    restic.TagLists
@@ -64,31 +69,46 @@ func init() {
 	f.IntVarP(&forgetOptions.Monthly, "keep-monthly", "m", 0, "keep the last `n` monthly snapshots")
 	f.IntVarP(&forgetOptions.Yearly, "keep-yearly", "y", 0, "keep the last `n` yearly snapshots")
 	f.VarP(&forgetOptions.Within, "keep-within", "", "keep snapshots that are newer than `duration` (eg. 1y5m7d2h) relative to the latest snapshot")
+	f.VarP(&forgetOptions.WithinHourly, "keep-within-hourly", "", "keep hourly snapshots that are newer than `duration` (eg. 1y5m7d2h) relative to the latest snapshot")
+	f.VarP(&forgetOptions.WithinDaily, "keep-within-daily", "", "keep daily snapshots that are newer than `duration` (eg. 1y5m7d2h) relative to the latest snapshot")
+	f.VarP(&forgetOptions.WithinWeekly, "keep-within-weekly", "", "keep weekly snapshots that are newer than `duration` (eg. 1y5m7d2h) relative to the latest snapshot")
+	f.VarP(&forgetOptions.WithinMonthly, "keep-within-monthly", "", "keep monthly snapshots that are newer than `duration` (eg. 1y5m7d2h) relative to the latest snapshot")
+	f.VarP(&forgetOptions.WithinYearly, "keep-within-yearly", "", "keep yearly snapshots that are newer than `duration` (eg. 1y5m7d2h) relative to the latest snapshot")
 
 	f.Var(&forgetOptions.KeepTags, "keep-tag", "keep snapshots with this `taglist` (can be specified multiple times)")
 	f.StringArrayVar(&forgetOptions.Hosts, "host", nil, "only consider snapshots with the given `host` (can be specified multiple times)")
 	f.StringArrayVar(&forgetOptions.Hosts, "hostname", nil, "only consider snapshots with the given `hostname` (can be specified multiple times)")
-	f.MarkDeprecated("hostname", "use --host")
+	err := f.MarkDeprecated("hostname", "use --host")
+	if err != nil {
+		// MarkDeprecated only returns an error when the flag is not found
+		panic(err)
+	}
 
 	f.Var(&forgetOptions.Tags, "tag", "only consider snapshots which include this `taglist` in the format `tag[,tag,...]` (can be specified multiple times)")
 
 	f.StringArrayVar(&forgetOptions.Paths, "path", nil, "only consider snapshots which include this (absolute) `path` (can be specified multiple times)")
-	f.BoolVarP(&forgetOptions.Compact, "compact", "c", false, "use compact format")
+	f.BoolVarP(&forgetOptions.Compact, "compact", "c", false, "use compact output format")
 
 	f.StringVarP(&forgetOptions.GroupBy, "group-by", "g", "host,paths", "string for grouping snapshots by host,paths,tags")
 	f.BoolVarP(&forgetOptions.DryRun, "dry-run", "n", false, "do not delete anything, just print what would be done")
 	f.BoolVar(&forgetOptions.Prune, "prune", false, "automatically run the 'prune' command if snapshots have been removed")
 
 	f.SortFlags = false
+	addPruneOptions(cmdForget)
 }
 
 func runForget(opts ForgetOptions, gopts GlobalOptions, args []string) error {
+	err := verifyPruneOptions(&pruneOptions)
+	if err != nil {
+		return err
+	}
+
 	repo, err := OpenRepository(gopts)
 	if err != nil {
 		return err
 	}
 
-	lock, err := lockRepoExclusive(repo)
+	lock, err := lockRepoExclusive(gopts.ctx, repo)
 	defer unlockRepo(lock)
 	if err != nil {
 		return err
@@ -118,14 +138,19 @@ func runForget(opts ForgetOptions, gopts GlobalOptions, args []string) error {
 		}
 
 		policy := restic.ExpirePolicy{
-			Last:    opts.Last,
-			Hourly:  opts.Hourly,
-			Daily:   opts.Daily,
-			Weekly:  opts.Weekly,
-			Monthly: opts.Monthly,
-			Yearly:  opts.Yearly,
-			Within:  opts.Within,
-			Tags:    opts.KeepTags,
+			Last:          opts.Last,
+			Hourly:        opts.Hourly,
+			Daily:         opts.Daily,
+			Weekly:        opts.Weekly,
+			Monthly:       opts.Monthly,
+			Yearly:        opts.Yearly,
+			Within:        opts.Within,
+			WithinHourly:  opts.WithinHourly,
+			WithinDaily:   opts.WithinDaily,
+			WithinWeekly:  opts.WithinWeekly,
+			WithinMonthly: opts.WithinMonthly,
+			WithinYearly:  opts.WithinYearly,
+			Tags:          opts.KeepTags,
 		}
 
 		if policy.Empty() && len(args) == 0 {
@@ -204,8 +229,12 @@ func runForget(opts ForgetOptions, gopts GlobalOptions, args []string) error {
 		}
 	}
 
-	if len(removeSnIDs) > 0 && opts.Prune && !opts.DryRun {
-		return pruneRepository(gopts, repo)
+	if len(removeSnIDs) > 0 && opts.Prune {
+		if !gopts.JSON {
+			Verbosef("%d snapshots have been removed, running prune\n", len(removeSnIDs))
+		}
+		pruneOptions.DryRun = opts.DryRun
+		return runPruneWithRepo(pruneOptions, gopts, repo, removeSnIDs)
 	}
 
 	return nil

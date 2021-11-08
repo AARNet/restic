@@ -51,7 +51,7 @@ func init() {
 
 func runCache(opts CacheOptions, gopts GlobalOptions, args []string) error {
 	if len(args) > 0 {
-		return errors.Fatal("the cache command has no arguments")
+		return errors.Fatal("the cache command expects no arguments, only options - please see `restic help cache` for usage and flags")
 	}
 
 	if gopts.NoCache {
@@ -148,7 +148,7 @@ func runCache(opts CacheOptions, gopts GlobalOptions, args []string) error {
 		})
 	}
 
-	tab.Write(gopts.stdout)
+	_ = tab.Write(gopts.stdout)
 	Printf("%d cache dirs in %s\n", len(dirs), cachedir)
 
 	return nil

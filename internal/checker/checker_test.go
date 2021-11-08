@@ -43,14 +43,16 @@ func checkPacks(chkr *checker.Checker) []error {
 }
 
 func checkStruct(chkr *checker.Checker) []error {
-	return collectErrors(context.TODO(), chkr.Structure)
+	return collectErrors(context.TODO(), func(ctx context.Context, errChan chan<- error) {
+		chkr.Structure(ctx, nil, errChan)
+	})
 }
 
 func checkData(chkr *checker.Checker) []error {
 	return collectErrors(
 		context.TODO(),
 		func(ctx context.Context, errCh chan<- error) {
-			chkr.ReadData(ctx, nil, errCh)
+			chkr.ReadData(ctx, errCh)
 		},
 	)
 }
@@ -61,7 +63,7 @@ func TestCheckRepo(t *testing.T) {
 
 	repo := repository.TestOpenLocal(t, repodir)
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
 		t.Fatalf("expected no errors, got %v: %v", len(errs), errs)
@@ -87,7 +89,7 @@ func TestMissingPack(t *testing.T) {
 	}
 	test.OK(t, repo.Backend().Remove(context.TODO(), packHandle))
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
 		t.Fatalf("expected no errors, got %v: %v", len(errs), errs)
@@ -123,7 +125,7 @@ func TestUnreferencedPack(t *testing.T) {
 	}
 	test.OK(t, repo.Backend().Remove(context.TODO(), indexHandle))
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
 		t.Fatalf("expected no errors, got %v: %v", len(errs), errs)
@@ -168,7 +170,7 @@ func TestUnreferencedBlobs(t *testing.T) {
 
 	sort.Sort(unusedBlobsBySnapshot)
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, true)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
 		t.Fatalf("expected no errors, got %v: %v", len(errs), errs)
@@ -181,7 +183,7 @@ func TestUnreferencedBlobs(t *testing.T) {
 	test.OKs(t, checkPacks(chkr))
 	test.OKs(t, checkStruct(chkr))
 
-	blobs := chkr.UnusedBlobs()
+	blobs := chkr.UnusedBlobs(context.TODO())
 	sort.Sort(blobs)
 
 	test.Equals(t, unusedBlobsBySnapshot, blobs)
@@ -241,7 +243,7 @@ func TestModifiedIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) == 0 {
 		t.Fatalf("expected errors not found")
@@ -264,7 +266,7 @@ func TestDuplicatePacksInIndex(t *testing.T) {
 
 	repo := repository.TestOpenLocal(t, repodir)
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(hints) == 0 {
 		t.Fatalf("did not get expected checker hints for duplicate packs in indexes")
@@ -336,7 +338,7 @@ func TestCheckerModifiedData(t *testing.T) {
 	checkRepo := repository.New(beError, 4*1024*1024)
 	test.OK(t, checkRepo.SearchKey(context.TODO(), test.TestPassword, 5, ""))
 
-	chkr := checker.New(checkRepo)
+	chkr := checker.New(checkRepo, false)
 
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
@@ -398,7 +400,7 @@ func TestCheckerNoDuplicateTreeDecodes(t *testing.T) {
 		loadedTrees: restic.NewIDSet(),
 	}
 
-	chkr := checker.New(checkRepo)
+	chkr := checker.New(checkRepo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
 		t.Fatalf("expected no errors, got %v: %v", len(errs), errs)
@@ -487,7 +489,7 @@ func TestCheckerBlobTypeConfusion(t *testing.T) {
 		Nodes: []*restic.Node{malNode, dirNode},
 	}
 
-	rootId, err := repo.SaveTree(ctx, rootTree)
+	rootID, err := repo.SaveTree(ctx, rootTree)
 	test.OK(t, err)
 
 	test.OK(t, repo.Flush(ctx))
@@ -496,12 +498,12 @@ func TestCheckerBlobTypeConfusion(t *testing.T) {
 	snapshot, err := restic.NewSnapshot([]string{"/damaged"}, []string{"test"}, "foo", time.Now())
 	test.OK(t, err)
 
-	snapshot.Tree = &rootId
+	snapshot.Tree = &rootID
 
-	snapId, err := repo.SaveJSONUnpacked(ctx, restic.SnapshotFile, snapshot)
+	snapID, err := repo.SaveJSONUnpacked(ctx, restic.SnapshotFile, snapshot)
 	test.OK(t, err)
 
-	t.Logf("saved snapshot %v", snapId.Str())
+	t.Logf("saved snapshot %v", snapID.Str())
 
 	delayRepo := &delayRepository{
 		Repository:     repo,
@@ -509,7 +511,7 @@ func TestCheckerBlobTypeConfusion(t *testing.T) {
 		UnblockChannel: make(chan struct{}),
 	}
 
-	chkr := checker.New(delayRepo)
+	chkr := checker.New(delayRepo, false)
 
 	go func() {
 		<-ctx.Done()
@@ -544,7 +546,7 @@ func loadBenchRepository(t *testing.B) (*checker.Checker, restic.Repository, fun
 
 	repo := repository.TestOpenLocal(t, repodir)
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, false)
 	hints, errs := chkr.LoadIndex(context.TODO())
 	if len(errs) > 0 {
 		defer cleanup()
@@ -574,7 +576,7 @@ func benchmarkSnapshotScaling(t *testing.B, newSnapshots int) {
 	chkr, repo, cleanup := loadBenchRepository(t)
 	defer cleanup()
 
-	snID, err := restic.FindSnapshot(repo, "51d249d2")
+	snID, err := restic.FindSnapshot(context.TODO(), repo, "51d249d2")
 	if err != nil {
 		t.Fatal(err)
 	}

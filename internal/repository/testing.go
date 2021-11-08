@@ -36,7 +36,7 @@ func TestBackend(t testing.TB) (be restic.Backend, cleanup func()) {
 	return mem.New(), func() {}
 }
 
-const testChunkerPol = chunker.Pol(0x3DA3358B4DC173)
+const TestChunkerPol = chunker.Pol(0x3DA3358B4DC173)
 
 const defaultMinPackSize = 4 * 1024 * 1024
 
@@ -55,7 +55,7 @@ func TestRepositoryWithBackend(t testing.TB, be restic.Backend) (r restic.Reposi
 
 	repo := New(be, defaultMinPackSize)
 
-	cfg := restic.TestCreateConfig(t, testChunkerPol)
+	cfg := restic.TestCreateConfig(t, TestChunkerPol)
 	err := repo.init(context.TODO(), test.TestPassword, cfg)
 	if err != nil {
 		t.Fatalf("TestRepository(): initialize repo failed: %v", err)
@@ -78,7 +78,7 @@ func TestRepository(t testing.TB) (r restic.Repository, cleanup func()) {
 	if dir != "" {
 		_, err := os.Stat(dir)
 		if err != nil {
-			be, err := local.Create(local.Config{Path: dir})
+			be, err := local.Create(context.TODO(), local.Config{Path: dir})
 			if err != nil {
 				t.Fatalf("error creating local backend at %v: %v", dir, err)
 			}
@@ -95,7 +95,7 @@ func TestRepository(t testing.TB) (r restic.Repository, cleanup func()) {
 
 // TestOpenLocal opens a local repository.
 func TestOpenLocal(t testing.TB, dir string) (r restic.Repository) {
-	be, err := local.Open(local.Config{Path: dir})
+	be, err := local.Open(context.TODO(), local.Config{Path: dir})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -221,12 +221,16 @@ func buildTargets(sourceDir, outputDir string, targets map[string][]string) {
 	msg("build finished in %.3fs", time.Since(start).Seconds())
 }
 
+// ATTENTION: the list of architectures must be in sync with .github/workflows/tests.yml!
 var defaultBuildTargets = map[string][]string{
-	"darwin":  {"amd64"},
+	"aix":     {"ppc64"},
+	"darwin":  {"amd64", "arm64"},
 	"freebsd": {"386", "amd64", "arm"},
-	"linux":   {"386", "amd64", "arm", "arm64", "ppc64le"},
+	"linux":   {"386", "amd64", "arm", "arm64", "ppc64le", "mips", "mipsle", "mips64", "mips64le", "s390x"},
+	"netbsd":  {"386", "amd64"},
 	"openbsd": {"386", "amd64"},
 	"windows": {"386", "amd64"},
+	"solaris": {"amd64"},
 }
 
 func main() {

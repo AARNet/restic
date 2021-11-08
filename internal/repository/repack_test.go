@@ -4,8 +4,8 @@ import (
 	"context"
 	"math/rand"
 	"testing"
+	"time"
 
-	"github.com/restic/restic/internal/index"
 	"github.com/restic/restic/internal/repository"
 	"github.com/restic/restic/internal/restic"
 )
@@ -128,7 +128,7 @@ func findPacksForBlobs(t *testing.T, repo restic.Repository, blobs restic.BlobSe
 
 	idx := repo.Index()
 	for h := range blobs {
-		list := idx.Lookup(h.ID, h.Type)
+		list := idx.Lookup(h)
 		if len(list) == 0 {
 			t.Fatal("Failed to find blob", h.ID.Str(), "with type", h.Type)
 		}
@@ -162,7 +162,21 @@ func saveIndex(t *testing.T, repo restic.Repository) {
 }
 
 func rebuildIndex(t *testing.T, repo restic.Repository) {
-	idx, _, err := index.New(context.TODO(), repo, restic.NewIDSet(), nil)
+	err := repo.SetIndex(repository.NewMasterIndex())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	packs := make(map[restic.ID]int64)
+	err = repo.List(context.TODO(), restic.PackFile, func(id restic.ID, size int64) error {
+		packs[id] = size
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = repo.(*repository.Repository).CreateIndexFromPacks(context.TODO(), packs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,14 +192,20 @@ func rebuildIndex(t *testing.T, repo restic.Repository) {
 		t.Fatal(err)
 	}
 
-	_, err = idx.Save(context.TODO(), repo, nil)
+	_, err = (repo.Index()).(*repository.MasterIndex).
+		Save(context.TODO(), repo, restic.NewIDSet(), nil, nil)
+
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
 func reloadIndex(t *testing.T, repo restic.Repository) {
-	repo.SetIndex(repository.NewMasterIndex())
+	err := repo.SetIndex(repository.NewMasterIndex())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if err := repo.LoadIndex(context.TODO()); err != nil {
 		t.Fatalf("error loading new index: %v", err)
 	}
@@ -195,7 +215,7 @@ func TestRepack(t *testing.T) {
 	repo, cleanup := repository.TestRepository(t)
 	defer cleanup()
 
-	seed := rand.Int63()
+	seed := time.Now().UnixNano()
 	rand.Seed(seed)
 	t.Logf("rand seed is %v", seed)
 
@@ -233,7 +253,7 @@ func TestRepack(t *testing.T) {
 	idx := repo.Index()
 
 	for h := range keepBlobs {
-		list := idx.Lookup(h.ID, h.Type)
+		list := idx.Lookup(h)
 		if len(list) == 0 {
 			t.Errorf("unable to find blob %v in repo", h.ID.Str())
 			continue
@@ -262,7 +282,7 @@ func TestRepackWrongBlob(t *testing.T) {
 	repo, cleanup := repository.TestRepository(t)
 	defer cleanup()
 
-	seed := rand.Int63()
+	seed := time.Now().UnixNano()
 	rand.Seed(seed)
 	t.Logf("rand seed is %v", seed)
 
@@ -277,5 +297,5 @@ func TestRepackWrongBlob(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected repack to fail but got no error")
 	}
-	t.Log(err)
+	t.Logf("found expected error: %v", err)
 }

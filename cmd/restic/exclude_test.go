@@ -219,6 +219,25 @@ func TestParseSizeStr(t *testing.T) {
 	}
 }
 
+func TestParseInvalidSizeStr(t *testing.T) {
+	invalidSizes := []string{
+		"",
+		" ",
+		"foobar",
+		"zzz",
+	}
+
+	for _, s := range invalidSizes {
+		v, err := parseSizeStr(s)
+		if err == nil {
+			t.Errorf("wanted error for invalid value %q, got nil", s)
+		}
+		if v != 0 {
+			t.Errorf("wanted zero for invalid value %q, got: %v", s, v)
+		}
+	}
+}
+
 // TestIsExcludedByFileSize is for testing the instance of
 // --exclude-larger-than parameters
 func TestIsExcludedByFileSize(t *testing.T) {
@@ -297,5 +316,49 @@ func TestIsExcludedByFileSize(t *testing.T) {
 		if m[p] != f.incl {
 			t.Errorf("inclusion status of %s is wrong: want %v, got %v", f.path, f.incl, m[p])
 		}
+	}
+}
+
+func TestDeviceMap(t *testing.T) {
+	deviceMap := DeviceMap{
+		filepath.FromSlash("/"):          1,
+		filepath.FromSlash("/usr/local"): 5,
+	}
+
+	var tests = []struct {
+		item     string
+		deviceID uint64
+		allowed  bool
+	}{
+		{"/root", 1, true},
+		{"/usr", 1, true},
+
+		{"/proc", 2, false},
+		{"/proc/1234", 2, false},
+
+		{"/usr", 3, false},
+		{"/usr/share", 3, false},
+
+		{"/usr/local", 5, true},
+		{"/usr/local/foobar", 5, true},
+
+		{"/usr/local/foobar/submount", 23, false},
+		{"/usr/local/foobar/submount/file", 23, false},
+
+		{"/usr/local/foobar/outhersubmount", 1, false},
+		{"/usr/local/foobar/outhersubmount/otherfile", 1, false},
+	}
+
+	for _, test := range tests {
+		t.Run("", func(t *testing.T) {
+			res, err := deviceMap.IsAllowed(filepath.FromSlash(test.item), test.deviceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if res != test.allowed {
+				t.Fatalf("wrong result returned by IsAllowed(%v): want %v, got %v", test.item, test.allowed, res)
+			}
+		})
 	}
 }

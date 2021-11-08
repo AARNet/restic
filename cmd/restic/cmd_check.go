@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -53,25 +54,38 @@ func init() {
 
 	f := cmdCheck.Flags()
 	f.BoolVar(&checkOptions.ReadData, "read-data", false, "read all data blobs")
-	f.StringVar(&checkOptions.ReadDataSubset, "read-data-subset", "", "read subset n of m data packs (format: `n/m`)")
+	f.StringVar(&checkOptions.ReadDataSubset, "read-data-subset", "", "read a `subset` of data packs, specified as 'n/t' for specific subset or either 'x%' or 'x.y%' for random subset")
 	f.BoolVar(&checkOptions.CheckUnused, "check-unused", false, "find unused blobs")
 	f.BoolVar(&checkOptions.WithCache, "with-cache", false, "use the cache")
 }
 
 func checkFlags(opts CheckOptions) error {
 	if opts.ReadData && opts.ReadDataSubset != "" {
-		return errors.Fatalf("check flags --read-data and --read-data-subset cannot be used together")
+		return errors.Fatal("check flags --read-data and --read-data-subset cannot be used together")
 	}
 	if opts.ReadDataSubset != "" {
 		dataSubset, err := stringToIntSlice(opts.ReadDataSubset)
-		if err != nil || len(dataSubset) != 2 {
-			return errors.Fatalf("check flag --read-data-subset must have two positive integer values, e.g. --read-data-subset=1/2")
-		}
-		if dataSubset[0] == 0 || dataSubset[1] == 0 || dataSubset[0] > dataSubset[1] {
-			return errors.Fatalf("check flag --read-data-subset=n/t values must be positive integers, and n <= t, e.g. --read-data-subset=1/2")
-		}
-		if dataSubset[1] > totalBucketsMax {
-			return errors.Fatalf("check flag --read-data-subset=n/t t must be at most %d", totalBucketsMax)
+		argumentError := errors.Fatal("check flag --read-data-subset must have two positive integer values or a percentage, e.g. --read-data-subset=1/2 or --read-data-subset=2.5%%")
+		if err == nil {
+			if len(dataSubset) != 2 {
+				return argumentError
+			}
+			if dataSubset[0] == 0 || dataSubset[1] == 0 || dataSubset[0] > dataSubset[1] {
+				return errors.Fatal("check flag --read-data-subset=n/t values must be positive integers, and n <= t, e.g. --read-data-subset=1/2")
+			}
+			if dataSubset[1] > totalBucketsMax {
+				return errors.Fatalf("check flag --read-data-subset=n/t t must be at most %d", totalBucketsMax)
+			}
+		} else {
+			percentage, err := parsePercentage(opts.ReadDataSubset)
+			if err != nil {
+				return argumentError
+			}
+
+			if percentage <= 0.0 || percentage > 100.0 {
+				return errors.Fatal(
+					"check flag --read-data-subset=n% n must be above 0.0% and at most 100.0%")
+			}
 		}
 	}
 
@@ -96,6 +110,21 @@ func stringToIntSlice(param string) (split []uint, err error) {
 		result[idx] = uint(uintval)
 	}
 	return result, nil
+}
+
+// ParsePercentage parses a percentage string of the form "X%" where X is a float constant,
+// and returns the value of that constant. It does not check the range of the value.
+func parsePercentage(s string) (float64, error) {
+	if !strings.HasSuffix(s, "%") {
+		return 0, errors.Errorf(`parsePercentage: %q does not end in "%%"`, s)
+	}
+	s = s[:len(s)-1]
+
+	p, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, errors.Errorf("parsePercentage: %v", err)
+	}
+	return p, nil
 }
 
 // prepareCheckCache configures a special cache directory for check.
@@ -142,7 +171,7 @@ func prepareCheckCache(opts CheckOptions, gopts *GlobalOptions) (cleanup func())
 
 func runCheck(opts CheckOptions, gopts GlobalOptions, args []string) error {
 	if len(args) != 0 {
-		return errors.Fatal("check has no arguments")
+		return errors.Fatal("the check command expects no arguments, only options - please see `restic help check` for usage and flags")
 	}
 
 	cleanup := prepareCheckCache(opts, &gopts)
@@ -158,14 +187,14 @@ func runCheck(opts CheckOptions, gopts GlobalOptions, args []string) error {
 
 	if !gopts.NoLock {
 		Verbosef("create exclusive lock for repository\n")
-		lock, err := lockRepoExclusive(repo)
+		lock, err := lockRepoExclusive(gopts.ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
 		}
 	}
 
-	chkr := checker.New(repo)
+	chkr := checker.New(repo, opts.CheckUnused)
 
 	Verbosef("load indexes\n")
 	hints, errs := chkr.LoadIndex(gopts.ctx)
@@ -212,7 +241,11 @@ func runCheck(opts CheckOptions, gopts GlobalOptions, args []string) error {
 
 	Verbosef("check snapshots, trees and blobs\n")
 	errChan = make(chan error)
-	go chkr.Structure(gopts.ctx, errChan)
+	go func() {
+		bar := newProgressMax(!gopts.Quiet, 0, "snapshots")
+		defer bar.Done()
+		chkr.Structure(gopts.ctx, bar, errChan)
+	}()
 
 	for err := range errChan {
 		errorsFound = true
@@ -227,28 +260,14 @@ func runCheck(opts CheckOptions, gopts GlobalOptions, args []string) error {
 	}
 
 	if opts.CheckUnused {
-		for _, id := range chkr.UnusedBlobs() {
+		for _, id := range chkr.UnusedBlobs(gopts.ctx) {
 			Verbosef("unused blob %v\n", id)
 			errorsFound = true
 		}
 	}
 
-	doReadData := func(bucket, totalBuckets uint) {
-		packs := restic.IDSet{}
-		for pack := range chkr.GetPacks() {
-			// If we ever check more than the first byte
-			// of pack, update totalBucketsMax.
-			if (uint(pack[0]) % totalBuckets) == (bucket - 1) {
-				packs.Insert(pack)
-			}
-		}
+	doReadData := func(packs map[restic.ID]int64) {
 		packCount := uint64(len(packs))
-
-		if packCount < chkr.CountPacks() {
-			Verbosef(fmt.Sprintf("read group #%d of %d data packs (out of total %d packs in %d groups)\n", bucket, packCount, chkr.CountPacks(), totalBuckets))
-		} else {
-			Verbosef("read all data\n")
-		}
 
 		p := newProgressMax(!gopts.Quiet, packCount, "packs")
 		errChan := make(chan error)
@@ -259,14 +278,31 @@ func runCheck(opts CheckOptions, gopts GlobalOptions, args []string) error {
 			errorsFound = true
 			Warnf("%v\n", err)
 		}
+		p.Done()
 	}
 
 	switch {
 	case opts.ReadData:
-		doReadData(1, 1)
+		Verbosef("read all data\n")
+		doReadData(selectPacksByBucket(chkr.GetPacks(), 1, 1))
 	case opts.ReadDataSubset != "":
-		dataSubset, _ := stringToIntSlice(opts.ReadDataSubset)
-		doReadData(dataSubset[0], dataSubset[1])
+		var packs map[restic.ID]int64
+		dataSubset, err := stringToIntSlice(opts.ReadDataSubset)
+		if err == nil {
+			bucket := dataSubset[0]
+			totalBuckets := dataSubset[1]
+			packs = selectPacksByBucket(chkr.GetPacks(), bucket, totalBuckets)
+			packCount := uint64(len(packs))
+			Verbosef("read group #%d of %d data packs (out of total %d packs in %d groups)\n", bucket, packCount, chkr.CountPacks(), totalBuckets)
+		} else {
+			percentage, _ := parsePercentage(opts.ReadDataSubset)
+			packs = selectRandomPacksByPercentage(chkr.GetPacks(), percentage)
+			Verbosef("read %.1f%% of data packs\n", percentage)
+		}
+		if packs == nil {
+			return errors.Fatal("internal error: failed to select packs to check")
+		}
+		doReadData(packs)
 	}
 
 	if errorsFound {
@@ -276,4 +312,43 @@ func runCheck(opts CheckOptions, gopts GlobalOptions, args []string) error {
 	Verbosef("no errors were found\n")
 
 	return nil
+}
+
+// selectPacksByBucket selects subsets of packs by ranges of buckets.
+func selectPacksByBucket(allPacks map[restic.ID]int64, bucket, totalBuckets uint) map[restic.ID]int64 {
+	packs := make(map[restic.ID]int64)
+	for pack, size := range allPacks {
+		// If we ever check more than the first byte
+		// of pack, update totalBucketsMax.
+		if (uint(pack[0]) % totalBuckets) == (bucket - 1) {
+			packs[pack] = size
+		}
+	}
+	return packs
+}
+
+// selectRandomPacksByPercentage selects the given percentage of packs which are randomly choosen.
+func selectRandomPacksByPercentage(allPacks map[restic.ID]int64, percentage float64) map[restic.ID]int64 {
+	packCount := len(allPacks)
+	packsToCheck := int(float64(packCount) * (percentage / 100.0))
+	if packCount > 0 && packsToCheck < 1 {
+		packsToCheck = 1
+	}
+	timeNs := time.Now().UnixNano()
+	r := rand.New(rand.NewSource(timeNs))
+	idx := r.Perm(packCount)
+
+	var keys []restic.ID
+	for k := range allPacks {
+		keys = append(keys, k)
+	}
+
+	packs := make(map[restic.ID]int64)
+
+	for i := 0; i < packsToCheck; i++ {
+		id := keys[idx[i]]
+		packs[id] = allPacks[id]
+	}
+
+	return packs
 }

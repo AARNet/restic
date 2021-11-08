@@ -4,6 +4,7 @@ package termstatus
 
 import (
 	"io"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -37,7 +38,6 @@ func moveCursorUp(wr io.Writer, fd uintptr) func(io.Writer, uintptr, int) {
 var kernel32 = syscall.NewLazyDLL("kernel32.dll")
 
 var (
-	procSetConsoleCursorPosition   = kernel32.NewProc("SetConsoleCursorPosition")
 	procFillConsoleOutputCharacter = kernel32.NewProc("FillConsoleOutputCharacterW")
 	procFillConsoleOutputAttribute = kernel32.NewProc("FillConsoleOutputAttribute")
 )
@@ -65,9 +65,10 @@ func windowsMoveCursorUp(wr io.Writer, fd uintptr, n int) {
 	windows.GetConsoleScreenBufferInfo(windows.Handle(fd), &info)
 
 	// move cursor up by n lines and to the first column
-	info.CursorPosition.Y -= int16(n)
-	info.CursorPosition.X = 0
-	procSetConsoleCursorPosition.Call(fd, uintptr(*(*int32)(unsafe.Pointer(&info.CursorPosition))))
+	windows.SetConsoleCursorPosition(windows.Handle(fd), windows.Coord{
+		X: 0,
+		Y: info.CursorPosition.Y - int16(n),
+	})
 }
 
 // isWindowsTerminal return true if the file descriptor is a windows terminal (cmd, psh).
@@ -80,19 +81,47 @@ func isPipe(fd uintptr) bool {
 	return err == nil && typ == windows.FILE_TYPE_PIPE
 }
 
-// canUpdateStatus returns true if status lines can be printed, the process
+func getFileNameByHandle(fd uintptr) (string, error) {
+	type FILE_NAME_INFO struct {
+		FileNameLength int32
+		FileName       [windows.MAX_LONG_PATH]uint16
+	}
+
+	var fi FILE_NAME_INFO
+	err := windows.GetFileInformationByHandleEx(windows.Handle(fd), windows.FileNameInfo, (*byte)(unsafe.Pointer(&fi)), uint32(unsafe.Sizeof(fi)))
+	if err != nil {
+		return "", err
+	}
+
+	filename := syscall.UTF16ToString(fi.FileName[:])
+	return filename, nil
+}
+
+// CanUpdateStatus returns true if status lines can be printed, the process
 // output is not redirected to a file or pipe.
-func canUpdateStatus(fd uintptr) bool {
+func CanUpdateStatus(fd uintptr) bool {
 	// easy case, the terminal is cmd or psh, without redirection
 	if isWindowsTerminal(fd) {
 		return true
 	}
 
-	// check if the output file type is a pipe (0x0003)
-	if isPipe(fd) {
+	// pipes require special handling
+	if !isPipe(fd) {
 		return false
 	}
 
-	// assume we're running in mintty/cygwin
-	return true
+	fn, err := getFileNameByHandle(fd)
+	if err != nil {
+		return false
+	}
+
+	// inspired by https://github.com/RyanGlScott/mintty/blob/master/src/System/Console/MinTTY/Win32.hsc
+	// terminal: \msys-dd50a72ab4668b33-pty0-to-master
+	// pipe to cat: \msys-dd50a72ab4668b33-13244-pipe-0x16
+	if (strings.HasPrefix(fn, "\\cygwin-") || strings.HasPrefix(fn, "\\msys-")) &&
+		strings.Contains(fn, "-pty") && strings.HasSuffix(fn, "-master") {
+		return true
+	}
+
+	return false
 }

@@ -9,7 +9,7 @@ import (
 // DeleteFiles deletes the given fileList of fileType in parallel
 // it will print a warning if there is an error, but continue deleting the remaining files
 func DeleteFiles(gopts GlobalOptions, repo restic.Repository, fileList restic.IDSet, fileType restic.FileType) {
-	deleteFiles(gopts, true, repo, fileList, fileType)
+	_ = deleteFiles(gopts, true, repo, fileList, fileType)
 }
 
 // DeleteFilesChecked deletes the given fileList of fileType in parallel
@@ -25,16 +25,21 @@ const numDeleteWorkers = 8
 func deleteFiles(gopts GlobalOptions, ignoreError bool, repo restic.Repository, fileList restic.IDSet, fileType restic.FileType) error {
 	totalCount := len(fileList)
 	fileChan := make(chan restic.ID)
-	go func() {
+	wg, ctx := errgroup.WithContext(gopts.ctx)
+	wg.Go(func() error {
+		defer close(fileChan)
 		for id := range fileList {
-			fileChan <- id
+			select {
+			case fileChan <- id:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		close(fileChan)
-	}()
+		return nil
+	})
 
 	bar := newProgressMax(!gopts.JSON && !gopts.Quiet, uint64(totalCount), "files deleted")
-	wg, ctx := errgroup.WithContext(gopts.ctx)
-	bar.Start()
+	defer bar.Done()
 	for i := 0; i < numDeleteWorkers; i++ {
 		wg.Go(func() error {
 			for id := range fileChan {
@@ -48,15 +53,14 @@ func deleteFiles(gopts GlobalOptions, ignoreError bool, repo restic.Repository, 
 						return err
 					}
 				}
-				if !gopts.JSON && gopts.verbosity >= 2 {
+				if !gopts.JSON && gopts.verbosity > 2 {
 					Verbosef("removed %v\n", h)
 				}
-				bar.Report(restic.Stat{Blobs: 1})
+				bar.Add(1)
 			}
 			return nil
 		})
 	}
 	err := wg.Wait()
-	bar.Done()
 	return err
 }

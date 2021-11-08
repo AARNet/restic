@@ -33,9 +33,7 @@ func TestBackendSaveRetry(t *testing.T) {
 		},
 	}
 
-	retryBackend := RetryBackend{
-		Backend: be,
-	}
+	retryBackend := NewRetryBackend(be, 10, nil)
 
 	data := test.Random(23, 5*1024*1024+11241)
 	err := retryBackend.Save(context.TODO(), restic.Handle{}, restic.NewByteReader(data))
@@ -64,18 +62,16 @@ func TestBackendListRetry(t *testing.T) {
 			// fail during first retry, succeed during second
 			retry++
 			if retry == 1 {
-				fn(restic.FileInfo{Name: ID1})
+				_ = fn(restic.FileInfo{Name: ID1})
 				return errors.New("test list error")
 			}
-			fn(restic.FileInfo{Name: ID1})
-			fn(restic.FileInfo{Name: ID2})
+			_ = fn(restic.FileInfo{Name: ID1})
+			_ = fn(restic.FileInfo{Name: ID2})
 			return nil
 		},
 	}
 
-	retryBackend := RetryBackend{
-		Backend: be,
-	}
+	retryBackend := NewRetryBackend(be, 10, nil)
 
 	var listed []string
 	err := retryBackend.List(context.TODO(), restic.PackFile, func(fi restic.FileInfo) error {
@@ -104,9 +100,7 @@ func TestBackendListRetryErrorFn(t *testing.T) {
 		},
 	}
 
-	retryBackend := RetryBackend{
-		Backend: be,
-	}
+	retryBackend := NewRetryBackend(be, 10, nil)
 
 	var ErrTest = errors.New("test error")
 
@@ -162,10 +156,7 @@ func TestBackendListRetryErrorBackend(t *testing.T) {
 	}
 
 	const maxRetries = 2
-	retryBackend := RetryBackend{
-		MaxTries: maxRetries,
-		Backend:  be,
-	}
+	retryBackend := NewRetryBackend(be, maxRetries, nil)
 
 	var listed []string
 	err := retryBackend.List(context.TODO(), restic.PackFile, func(fi restic.FileInfo) error {
@@ -234,9 +225,7 @@ func TestBackendLoadRetry(t *testing.T) {
 		return failingReader{data: data, limit: limit}, nil
 	}
 
-	retryBackend := RetryBackend{
-		Backend: be,
-	}
+	retryBackend := NewRetryBackend(be, 10, nil)
 
 	var buf []byte
 	err := retryBackend.Load(context.TODO(), restic.Handle{}, 0, 0, func(rd io.Reader) (err error) {
@@ -246,4 +235,39 @@ func TestBackendLoadRetry(t *testing.T) {
 	test.OK(t, err)
 	test.Equals(t, data, buf)
 	test.Equals(t, 2, attempt)
+}
+
+func assertIsCanceled(t *testing.T, err error) {
+	test.Assert(t, err == context.Canceled, "got unexpected err %v", err)
+}
+
+func TestBackendCanceledContext(t *testing.T) {
+	// unimplemented mock backend functions return an error by default
+	// check that we received the expected context canceled error instead
+	retryBackend := NewRetryBackend(mock.NewBackend(), 2, nil)
+	h := restic.Handle{Type: restic.PackFile, Name: restic.NewRandomID().String()}
+
+	// create an already canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := retryBackend.Test(ctx, h)
+	assertIsCanceled(t, err)
+	_, err = retryBackend.Stat(ctx, h)
+	assertIsCanceled(t, err)
+
+	err = retryBackend.Save(ctx, h, restic.NewByteReader([]byte{}))
+	assertIsCanceled(t, err)
+	err = retryBackend.Remove(ctx, h)
+	assertIsCanceled(t, err)
+	err = retryBackend.Load(ctx, restic.Handle{}, 0, 0, func(rd io.Reader) (err error) {
+		return nil
+	})
+	assertIsCanceled(t, err)
+	err = retryBackend.List(ctx, restic.PackFile, func(restic.FileInfo) error {
+		return nil
+	})
+	assertIsCanceled(t, err)
+
+	// don't test "Delete" as it is not used by normal code
 }

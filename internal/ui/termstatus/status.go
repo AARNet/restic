@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/text/width"
 )
 
 // Terminal is used to write messages and display status lines which can be
@@ -66,7 +67,7 @@ func New(wr io.Writer, errWriter io.Writer, disableStatus bool) *Terminal {
 		return t
 	}
 
-	if d, ok := wr.(fder); ok && canUpdateStatus(d.Fd()) {
+	if d, ok := wr.(fder); ok && CanUpdateStatus(d.Fd()) {
 		// only use the fancy status code when we're running on a real terminal.
 		t.canUpdateStatus = true
 		t.fd = d.Fd()
@@ -75,6 +76,11 @@ func New(wr io.Writer, errWriter io.Writer, disableStatus bool) *Terminal {
 	}
 
 	return t
+}
+
+// CanUpdateStatus return whether the status output is updated in place.
+func (t *Terminal) CanUpdateStatus() bool {
+	return t.canUpdateStatus
 }
 
 // Run updates the screen. It should be run in a separate goroutine. When
@@ -95,16 +101,14 @@ func (t *Terminal) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			if IsProcessBackground() {
-				// ignore all messages, do nothing, we are in the background process group
-				continue
+			if !IsProcessBackground(t.fd) {
+				t.undoStatus(len(status))
 			}
-			t.undoStatus(len(status))
 
 			return
 
 		case msg := <-t.msg:
-			if IsProcessBackground() {
+			if IsProcessBackground(t.fd) {
 				// ignore all messages, do nothing, we are in the background process group
 				continue
 			}
@@ -136,7 +140,7 @@ func (t *Terminal) run(ctx context.Context) {
 			}
 
 		case stat := <-t.status:
-			if IsProcessBackground() {
+			if IsProcessBackground(t.fd) {
 				// ignore all messages, do nothing, we are in the background process group
 				continue
 			}
@@ -204,8 +208,14 @@ func (t *Terminal) runWithoutStatus(ctx context.Context) {
 				fmt.Fprintf(os.Stderr, "flush failed: %v\n", err)
 			}
 
-		case <-t.status:
-			// discard status lines
+		case stat := <-t.status:
+			for _, line := range stat.lines {
+				// Ensure that each message ends with exactly one newline.
+				fmt.Fprintln(t.wr, strings.TrimRight(line, "\n"))
+			}
+			if err := t.wr.Flush(); err != nil {
+				fmt.Fprintf(os.Stderr, "flush failed: %v\n", err)
+			}
 		}
 	}
 }
@@ -234,17 +244,21 @@ func (t *Terminal) undoStatus(lines int) {
 	}
 }
 
-// Print writes a line to the terminal.
-func (t *Terminal) Print(line string) {
+func (t *Terminal) print(line string, isErr bool) {
 	// make sure the line ends with a line break
 	if line[len(line)-1] != '\n' {
 		line += "\n"
 	}
 
 	select {
-	case t.msg <- message{line: line}:
+	case t.msg <- message{line: line, err: isErr}:
 	case <-t.closed:
 	}
+}
+
+// Print writes a line to the terminal.
+func (t *Terminal) Print(line string) {
+	t.print(line, false)
 }
 
 // Printf uses fmt.Sprintf to write a line to the terminal.
@@ -255,15 +269,7 @@ func (t *Terminal) Printf(msg string, args ...interface{}) {
 
 // Error writes an error to the terminal.
 func (t *Terminal) Error(line string) {
-	// make sure the line ends with a line break
-	if line[len(line)-1] != '\n' {
-		line += "\n"
-	}
-
-	select {
-	case t.msg <- message{line: line, err: true}:
-	case <-t.closed:
-	}
+	t.print(line, true)
 }
 
 // Errorf uses fmt.Sprintf to write an error line to the terminal.
@@ -272,18 +278,33 @@ func (t *Terminal) Errorf(msg string, args ...interface{}) {
 	t.Error(s)
 }
 
-// truncate returns a string that has at most maxlen characters. If maxlen is
-// negative, the empty string is returned.
-func truncate(s string, maxlen int) string {
-	if maxlen < 0 {
-		return ""
-	}
-
-	if len(s) < maxlen {
+// Truncate s to fit in width (number of terminal cells) w.
+// If w is negative, returns the empty string.
+func truncate(s string, w int) string {
+	if len(s) < w {
+		// Since the display width of a character is at most 2
+		// and all of ASCII (single byte per rune) has width 1,
+		// no character takes more bytes to encode than its width.
 		return s
 	}
 
-	return s[:maxlen]
+	for i, r := range s {
+		// Determine width of the rune. This cannot be determined without
+		// knowing the terminal font, so let's just be careful and treat
+		// all ambigous characters as full-width, i.e., two cells.
+		wr := 2
+		switch width.LookupRune(r).Kind() {
+		case width.Neutral, width.EastAsianNarrow:
+			wr = 1
+		}
+
+		w -= wr
+		if w < 0 {
+			return s[:i]
+		}
+	}
+
+	return s
 }
 
 // SetStatus updates the status lines.
@@ -292,17 +313,24 @@ func (t *Terminal) SetStatus(lines []string) {
 		return
 	}
 
-	width, _, err := terminal.GetSize(int(t.fd))
-	if err != nil || width <= 0 {
-		// use 80 columns by default
-		width = 80
+	// only truncate interactive status output
+	var width int
+	if t.canUpdateStatus {
+		var err error
+		width, _, err = terminal.GetSize(int(t.fd))
+		if err != nil || width <= 0 {
+			// use 80 columns by default
+			width = 80
+		}
 	}
 
 	// make sure that all lines have a line break and are not too long
 	for i, line := range lines {
 		line = strings.TrimRight(line, "\n")
-		line = truncate(line, width-2) + "\n"
-		lines[i] = line
+		if width > 0 {
+			line = truncate(line, width-2)
+		}
+		lines[i] = line + "\n"
 	}
 
 	// make sure the last line does not have a line break

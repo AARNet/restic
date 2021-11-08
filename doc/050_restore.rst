@@ -71,10 +71,11 @@ command to serve the repository with FUSE:
     Now serving /srv/restic-repo at /mnt/restic
     When finished, quit with Ctrl-c or umount the mountpoint.
 
-Mounting repositories via FUSE is not possible on OpenBSD, Solaris/illumos
-and Windows. For Linux, the ``fuse`` kernel module needs to be loaded. For
-FreeBSD, you may need to install FUSE and load the kernel module (``kldload
-fuse``).
+Mounting repositories via FUSE is only possible on Linux, macOS and FreeBSD.
+On Linux, the ``fuse`` kernel module needs to be loaded and the ``fusermount``
+command needs to be in the ``PATH``. On macOS, you need `FUSE for macOS
+<https://osxfuse.github.io/>`__. On FreeBSD, you may need to install FUSE
+and load the kernel module (``kldload fuse``).
 
 Restic supports storage and preservation of hard links. However, since
 hard links exist in the scope of a filesystem by definition, restoring
@@ -127,10 +128,13 @@ e.g.:
 
 It is also possible to ``dump`` the contents of a whole folder structure to
 stdout. To retain the information about the files and folders Restic will
-output the contents in the tar format:
+output the contents in the tar (default) or zip format:
 
 .. code-block:: console
 
     $ restic -r /srv/restic-repo dump latest /home/other/work > restore.tar
+ 
+.. code-block:: console
 
+    $ restic -r /srv/restic-repo dump -a zip latest /home/other/work > restore.zip
 

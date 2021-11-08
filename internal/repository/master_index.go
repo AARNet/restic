@@ -2,11 +2,14 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
-	"github.com/restic/restic/internal/restic"
-
 	"github.com/restic/restic/internal/debug"
+	"github.com/restic/restic/internal/pack"
+	"github.com/restic/restic/internal/restic"
+	"github.com/restic/restic/internal/ui/progress"
+	"golang.org/x/sync/errgroup"
 )
 
 // MasterIndex is a collection of indexes and IDs of chunks that are in the process of being saved.
@@ -27,24 +30,24 @@ func NewMasterIndex() *MasterIndex {
 }
 
 // Lookup queries all known Indexes for the ID and returns all matches.
-func (mi *MasterIndex) Lookup(id restic.ID, tpe restic.BlobType) (blobs []restic.PackedBlob) {
+func (mi *MasterIndex) Lookup(bh restic.BlobHandle) (pbs []restic.PackedBlob) {
 	mi.idxMutex.RLock()
 	defer mi.idxMutex.RUnlock()
 
 	for _, idx := range mi.idx {
-		blobs = idx.Lookup(id, tpe, blobs)
+		pbs = idx.Lookup(bh, pbs)
 	}
 
-	return blobs
+	return pbs
 }
 
 // LookupSize queries all known Indexes for the ID and returns the first match.
-func (mi *MasterIndex) LookupSize(id restic.ID, tpe restic.BlobType) (uint, bool) {
+func (mi *MasterIndex) LookupSize(bh restic.BlobHandle) (uint, bool) {
 	mi.idxMutex.RLock()
 	defer mi.idxMutex.RUnlock()
 
 	for _, idx := range mi.idx {
-		if size, found := idx.LookupSize(id, tpe); found {
+		if size, found := idx.LookupSize(bh); found {
 			return size, found
 		}
 	}
@@ -52,65 +55,89 @@ func (mi *MasterIndex) LookupSize(id restic.ID, tpe restic.BlobType) (uint, bool
 	return 0, false
 }
 
-// ListPack returns the list of blobs in a pack. The first matching index is
-// returned, or nil if no index contains information about the pack id.
-func (mi *MasterIndex) ListPack(id restic.ID) (list []restic.PackedBlob) {
-	mi.idxMutex.RLock()
-	defer mi.idxMutex.RUnlock()
-
-	for _, idx := range mi.idx {
-		list := idx.ListPack(id)
-		if len(list) > 0 {
-			return list
-		}
-	}
-
-	return nil
-}
-
 // AddPending adds a given blob to list of pending Blobs
 // Before doing so it checks if this blob is already known.
 // Returns true if adding was successful and false if the blob
 // was already known
-func (mi *MasterIndex) addPending(id restic.ID, tpe restic.BlobType) bool {
+func (mi *MasterIndex) addPending(bh restic.BlobHandle) bool {
 
 	mi.idxMutex.Lock()
 	defer mi.idxMutex.Unlock()
 
 	// Check if blob is pending or in index
-	if mi.pendingBlobs.Has(restic.BlobHandle{ID: id, Type: tpe}) {
+	if mi.pendingBlobs.Has(bh) {
 		return false
 	}
 
 	for _, idx := range mi.idx {
-		if idx.Has(id, tpe) {
+		if idx.Has(bh) {
 			return false
 		}
 	}
 
 	// really not known -> insert
-	mi.pendingBlobs.Insert(restic.BlobHandle{ID: id, Type: tpe})
+	mi.pendingBlobs.Insert(bh)
 	return true
 }
 
 // Has queries all known Indexes for the ID and returns the first match.
 // Also returns true if the ID is pending.
-func (mi *MasterIndex) Has(id restic.ID, tpe restic.BlobType) bool {
+func (mi *MasterIndex) Has(bh restic.BlobHandle) bool {
 	mi.idxMutex.RLock()
 	defer mi.idxMutex.RUnlock()
 
 	// also return true if blob is pending
-	if mi.pendingBlobs.Has(restic.BlobHandle{ID: id, Type: tpe}) {
+	if mi.pendingBlobs.Has(bh) {
 		return true
 	}
 
 	for _, idx := range mi.idx {
-		if idx.Has(id, tpe) {
+		if idx.Has(bh) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// Packs returns all packs that are covered by the index.
+// If packBlacklist is given, those packs are only contained in the
+// resulting IDSet if they are contained in a non-final (newly written) index.
+func (mi *MasterIndex) Packs(packBlacklist restic.IDSet) restic.IDSet {
+	mi.idxMutex.RLock()
+	defer mi.idxMutex.RUnlock()
+
+	packs := restic.NewIDSet()
+	for _, idx := range mi.idx {
+		idxPacks := idx.Packs()
+		if idx.final {
+			idxPacks = idxPacks.Sub(packBlacklist)
+		}
+		packs.Merge(idxPacks)
+	}
+
+	return packs
+}
+
+// PackSize returns the size of all packs computed by index information.
+// If onlyHdr is set to true, only the size of the header is returned
+// Note that this function only gives correct sizes, if there are no
+// duplicates in the index.
+func (mi *MasterIndex) PackSize(ctx context.Context, onlyHdr bool) map[restic.ID]int64 {
+	packSize := make(map[restic.ID]int64)
+
+	for blob := range mi.Each(ctx) {
+		size, ok := packSize[blob.PackID]
+		if !ok {
+			size = pack.HeaderSize
+		}
+		if !onlyHdr {
+			size += int64(blob.Length)
+		}
+		packSize[blob.PackID] = size + int64(pack.EntrySize)
+	}
+
+	return packSize
 }
 
 // Count returns the number of blobs of type t in the index.
@@ -245,7 +272,7 @@ func (mi *MasterIndex) Each(ctx context.Context) <-chan restic.PackedBlob {
 // Indexes that are not final are left untouched.
 // This merging can only be called after all index files are loaded - as
 // removing of superseded index contents is only possible for unmerged indexes.
-func (mi *MasterIndex) MergeFinalIndexes() {
+func (mi *MasterIndex) MergeFinalIndexes() error {
 	mi.idxMutex.Lock()
 	defer mi.idxMutex.Unlock()
 
@@ -258,55 +285,106 @@ func (mi *MasterIndex) MergeFinalIndexes() {
 		if !idx.Final() {
 			newIdx = append(newIdx, idx)
 		} else {
-			mi.idx[0].merge(idx)
+			err := mi.idx[0].merge(idx)
+			if err != nil {
+				return fmt.Errorf("MergeFinalIndexes: %w", err)
+			}
 		}
 	}
 	mi.idx = newIdx
+
+	return nil
 }
 
-// RebuildIndex combines all known indexes to a new index, leaving out any
-// packs whose ID is contained in packBlacklist. The new index contains the IDs
-// of all known indexes in the "supersedes" field.
-func (mi *MasterIndex) RebuildIndex(packBlacklist restic.IDSet) (*Index, error) {
+const saveIndexParallelism = 4
+
+// Save saves all known indexes to index files, leaving out any
+// packs whose ID is contained in packBlacklist from finalized indexes.
+// The new index contains the IDs of all known indexes in the "supersedes"
+// field. The IDs are also returned in the IDSet obsolete.
+// After calling this function, you should remove the obsolete index files.
+func (mi *MasterIndex) Save(ctx context.Context, repo restic.Repository, packBlacklist restic.IDSet, extraObsolete restic.IDs, p *progress.Counter) (obsolete restic.IDSet, err error) {
 	mi.idxMutex.Lock()
 	defer mi.idxMutex.Unlock()
 
 	debug.Log("start rebuilding index of %d indexes, pack blacklist: %v", len(mi.idx), packBlacklist)
 
 	newIndex := NewIndex()
+	obsolete = restic.NewIDSet()
 
-	ctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
+	// track spawned goroutines using wg, create a new context which is
+	// cancelled as soon as an error occurs.
+	wg, ctx := errgroup.WithContext(ctx)
 
-	for i, idx := range mi.idx {
-		debug.Log("adding index %d", i)
+	ch := make(chan *Index)
 
-		for pb := range idx.Each(ctx) {
-			if packBlacklist.Has(pb.PackID) {
-				continue
+	wg.Go(func() error {
+		defer close(ch)
+		for i, idx := range mi.idx {
+			if idx.Final() {
+				ids, err := idx.IDs()
+				if err != nil {
+					debug.Log("index %d does not have an ID: %v", err)
+					return err
+				}
+
+				debug.Log("adding index ids %v to supersedes field", ids)
+
+				err = newIndex.AddToSupersedes(ids...)
+				if err != nil {
+					return err
+				}
+				obsolete.Merge(restic.NewIDSet(ids...))
+			} else {
+				debug.Log("index %d isn't final, don't add to supersedes field", i)
 			}
 
-			newIndex.Store(pb)
+			debug.Log("adding index %d", i)
+
+			for pbs := range idx.EachByPack(ctx, packBlacklist) {
+				newIndex.StorePack(pbs.packID, pbs.blobs)
+				p.Add(1)
+				if IndexFull(newIndex) {
+					select {
+					case ch <- newIndex:
+					case <-ctx.Done():
+						return nil
+					}
+					newIndex = NewIndex()
+				}
+			}
 		}
 
-		if !idx.Final() {
-			debug.Log("index %d isn't final, don't add to supersedes field", i)
-			continue
-		}
-
-		ids, err := idx.IDs()
+		err = newIndex.AddToSupersedes(extraObsolete...)
 		if err != nil {
-			debug.Log("index %d does not have an ID: %v", err)
-			return nil, err
+			return err
 		}
+		obsolete.Merge(restic.NewIDSet(extraObsolete...))
 
-		debug.Log("adding index ids %v to supersedes field", ids)
-
-		err = newIndex.AddToSupersedes(ids...)
-		if err != nil {
-			return nil, err
+		select {
+		case ch <- newIndex:
+		case <-ctx.Done():
 		}
+		return nil
+	})
+
+	// a worker receives an index from ch, and saves the index
+	worker := func() error {
+		for idx := range ch {
+			idx.Finalize()
+			if _, err := SaveIndex(ctx, repo, idx); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	return newIndex, nil
+	// run workers on ch
+	wg.Go(func() error {
+		return RunWorkers(saveIndexParallelism, worker)
+	})
+
+	err = wg.Wait()
+
+	return obsolete, err
 }

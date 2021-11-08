@@ -32,7 +32,7 @@ directories in an encrypted repository stored on different backends.
 	PersistentPreRunE: func(c *cobra.Command, args []string) error {
 		// set verbosity, default is one
 		globalOptions.verbosity = 1
-		if globalOptions.Quiet && (globalOptions.Verbose > 1) {
+		if globalOptions.Quiet && globalOptions.Verbose > 0 {
 			return errors.Fatal("--quiet and --verbose cannot be specified at the same time")
 		}
 
@@ -51,7 +51,7 @@ directories in an encrypted repository stored on different backends.
 			return err
 		}
 		globalOptions.extended = opts
-		if c.Name() == "version" {
+		if !needsPassword(c.Name()) {
 			return nil
 		}
 		pwd, err := resolvePassword(globalOptions, "RESTIC_PASSWORD")
@@ -69,6 +69,18 @@ directories in an encrypted repository stored on different backends.
 
 		return nil
 	},
+}
+
+// Distinguish commands that need the password from those that work without,
+// so we don't run $RESTIC_PASSWORD_COMMAND for no reason (it might prompt the
+// user for authentication).
+func needsPassword(cmd string) bool {
+	switch cmd {
+	case "cache", "generate", "help", "options", "self-update", "version":
+		return false
+	default:
+		return true
+	}
 }
 
 var logBuffer = bytes.NewBuffer(nil)

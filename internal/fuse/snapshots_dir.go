@@ -3,14 +3,13 @@
 package fuse
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/restic"
-
-	"golang.org/x/net/context"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -230,7 +229,10 @@ func updateSnapshots(ctx context.Context, root *Root) error {
 
 	if root.snCount != len(snapshots) {
 		root.snCount = len(snapshots)
-		root.repo.LoadIndex(ctx)
+		err := root.repo.LoadIndex(ctx)
+		if err != nil {
+			return err
+		}
 		root.snapshots = snapshots
 	}
 	root.lastCheck = time.Now()
@@ -273,7 +275,10 @@ func (d *SnapshotsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	debug.Log("ReadDirAll()")
 
 	// update snapshots
-	updateSnapshots(ctx, d.root)
+	err := updateSnapshots(ctx, d.root)
+	if err != nil {
+		return nil, err
+	}
 
 	// update snapshot names
 	updateSnapshotNames(d, d.root.cfg.SnapshotTemplate)
@@ -315,7 +320,10 @@ func (d *SnapshotsIDSDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error)
 	debug.Log("ReadDirAll()")
 
 	// update snapshots
-	updateSnapshots(ctx, d.root)
+	err := updateSnapshots(ctx, d.root)
+	if err != nil {
+		return nil, err
+	}
 
 	// update snapshot ids
 	updateSnapshotIDSNames(d)
@@ -349,7 +357,10 @@ func (d *HostsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	debug.Log("ReadDirAll()")
 
 	// update snapshots
-	updateSnapshots(ctx, d.root)
+	err := updateSnapshots(ctx, d.root)
+	if err != nil {
+		return nil, err
+	}
 
 	// update host names
 	updateHostsNames(d)
@@ -383,7 +394,10 @@ func (d *TagsDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	debug.Log("ReadDirAll()")
 
 	// update snapshots
-	updateSnapshots(ctx, d.root)
+	err := updateSnapshots(ctx, d.root)
+	if err != nil {
+		return nil, err
+	}
 
 	// update tag names
 	updateTagNames(d)
@@ -444,7 +458,10 @@ func (d *SnapshotsDir) Lookup(ctx context.Context, name string) (fs.Node, error)
 	sn, ok := d.names[name]
 	if !ok {
 		// could not find entry. Updating repository-state
-		updateSnapshots(ctx, d.root)
+		err := updateSnapshots(ctx, d.root)
+		if err != nil {
+			return nil, err
+		}
 
 		// update snapshot names
 		updateSnapshotNames(d, d.root.cfg.SnapshotTemplate)
@@ -477,7 +494,10 @@ func (d *SnapshotsIDSDir) Lookup(ctx context.Context, name string) (fs.Node, err
 	sn, ok := d.names[name]
 	if !ok {
 		// could not find entry. Updating repository-state
-		updateSnapshots(ctx, d.root)
+		err := updateSnapshots(ctx, d.root)
+		if err != nil {
+			return nil, err
+		}
 
 		// update snapshot ids
 		updateSnapshotIDSNames(d)
@@ -500,7 +520,10 @@ func (d *HostsDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	_, ok := d.hosts[name]
 	if !ok {
 		// could not find entry. Updating repository-state
-		updateSnapshots(ctx, d.root)
+		err := updateSnapshots(ctx, d.root)
+		if err != nil {
+			return nil, err
+		}
 
 		// update host names
 		updateHostsNames(d)
@@ -523,7 +546,10 @@ func (d *TagsDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	_, ok := d.tags[name]
 	if !ok {
 		// could not find entry. Updating repository-state
-		updateSnapshots(ctx, d.root)
+		err := updateSnapshots(ctx, d.root)
+		if err != nil {
+			return nil, err
+		}
 
 		// update tag names
 		updateTagNames(d)
