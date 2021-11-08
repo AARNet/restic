@@ -119,8 +119,18 @@ As restic uses rclone for WebDAV, the configuration is done using the rclone env
 
 
 
-git checkout -b my-first-merge
-git pull https://github.com/restic/restic.git v0.10.0
+
+
+
+
+
+
+### Updating rclone
+1. Open `Dockerfile`
+2. Replace the download URL for rclone with the new version's URL (or just modify the version numbers)
+3. Rebuild the docker iamge
+
+---
 
 [![Documentation](https://readthedocs.org/projects/restic/badge/?version=latest)](https://restic.readthedocs.io/en/latest/?badge=latest)
 [![Build Status](https://github.com/restic/restic/workflows/test/badge.svg)](https://github.com/restic/restic/actions?query=workflow%3Atest)
