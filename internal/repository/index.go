@@ -70,12 +70,12 @@ func (idx *Index) addToPacks(id restic.ID) int {
 	return len(idx.packs) - 1
 }
 
-const maxuint32 = 1<<32 - 1
+const maxuint32 = 1<<35 - 1
 
 func (idx *Index) store(packIndex int, blob restic.Blob) {
 	// assert that offset and length fit into uint32!
 	if blob.Offset > maxuint32 || blob.Length > maxuint32 {
-		panic("offset or length does not fit in uint32. You have packs > 4GB!")
+		panic("offset or length does not fit in uint32. You have packs > 32GB!")
 	}
 
 	m := &idx.byType[blob.Type]
