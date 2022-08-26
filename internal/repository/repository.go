@@ -116,7 +116,7 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 	}
 
 	if t != restic.ConfigFile && !restic.Hash(buf).Equal(id) {
-		return nil, errors.Errorf("load %v: invalid data returned", h)
+		return nil, errors.Errorf("load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes", h, id, restic.Hash(buf), len(buf))
 	}
 
 	nonce, ciphertext := buf[:r.key.NonceSize()], buf[r.key.NonceSize():]
