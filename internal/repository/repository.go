@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"sync"
+	"io/ioutil"
+	"time"
 
 	"github.com/restic/chunker"
 	"github.com/restic/restic/internal/cache"
@@ -100,22 +102,38 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 	}
 
 	h := restic.Handle{Type: t, Name: id.String()}
-	err := r.be.Load(ctx, h, 0, 0, func(rd io.Reader) error {
-		// make sure this call is idempotent, in case an error occurs
-		wr := bytes.NewBuffer(buf[:0])
-		_, cerr := io.Copy(wr, rd)
-		if cerr != nil {
-			return cerr
-		}
-		buf = wr.Bytes()
-		return nil
-	})
+	success := false
 
-	if err != nil {
-		return nil, err
+	for retry := 1; retry <= 5; retry++ {
+
+	        err := r.be.Load(ctx, h, 0, 0, func(rd io.Reader) error {
+	                // make sure this call is idempotent, in case an error occurs
+	                wr := bytes.NewBuffer(buf[:0])
+	                _, cerr := io.Copy(wr, rd)
+	                if cerr != nil {
+	                        return cerr
+	                }
+	                buf = wr.Bytes()
+	                return nil
+	        })
+
+		if err != nil {
+			return nil, err
+		}
+
+	        if t != restic.ConfigFile && !restic.Hash(buf).Equal(id) {
+			fmt.Fprintf(os.Stderr, "attempt %d: load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes\n", retry, h, id, restic.Hash(buf), len(buf))
+			tmpfile := fmt.Sprintf("/srv/restic/tmp/%v_%d", id, time.Now().Unix())
+			ioutil.WriteFile(tmpfile, buf, 0644)
+			continue
+	        }
+
+		success = true
+		break
+
 	}
 
-	if t != restic.ConfigFile && !restic.Hash(buf).Equal(id) {
+	if success == false {
 		return nil, errors.Errorf("load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes", h, id, restic.Hash(buf), len(buf))
 	}
 
