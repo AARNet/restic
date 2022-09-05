@@ -123,6 +123,8 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 
 	        if t != restic.ConfigFile && !restic.Hash(buf).Equal(id) {
 			fmt.Fprintf(os.Stderr, "attempt %d: load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes\n", retry, h, id, restic.Hash(buf), len(buf))
+			tmpfile := fmt.Sprintf("/srv/restic/tmp/%v_%d", id, time.Now().Unix())
+			ioutil.WriteFile(tmpfile, buf, 0644)
 			continue
 	        }
 
@@ -132,8 +134,6 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 	}
 
 	if success == false {
-		tmpfile := fmt.Sprintf("/srv/restic/tmp/%v_%d", id, time.Now().Unix())
-		ioutil.WriteFile(tmpfile, buf, 0644)
 		return nil, errors.Errorf("load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes", h, id, restic.Hash(buf), len(buf))
 	}
 
