@@ -122,7 +122,7 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 
 	        if t != restic.ConfigFile && !restic.Hash(buf).Equal(id) {
 			fmt.Fprintf(os.Stderr, "attempt %d: load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes\n", retry, h, id, restic.Hash(buf), len(buf))
-			time.Sleep(1800 * time.Second)
+			time.Sleep(1200 * time.Second)
 			continue
 	        }
 
