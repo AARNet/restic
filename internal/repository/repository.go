@@ -103,7 +103,7 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 	h := restic.Handle{Type: t, Name: id.String()}
 	success := false
 
-	for retry := 1; retry <= 3; retry++ {
+	for retry := 1; retry <= 5; retry++ {
 
 	        err := r.be.Load(ctx, h, 0, 0, func(rd io.Reader) error {
 	                // make sure this call is idempotent, in case an error occurs
@@ -122,7 +122,7 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 
 	        if t != restic.ConfigFile && !restic.Hash(buf).Equal(id) {
 			fmt.Fprintf(os.Stderr, "attempt %d: load %v: invalid data returned. Expected hash: %v , actual hash: %v , actual size: %d bytes\n", retry, h, id, restic.Hash(buf), len(buf))
-			time.Sleep(1200 * time.Second)
+			time.Sleep(5 * time.Second)
 			continue
 	        }
 
