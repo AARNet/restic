@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"sync"
-	"io/ioutil"
 	"time"
 
 	"github.com/restic/chunker"
@@ -104,7 +103,7 @@ func (r *Repository) LoadAndDecrypt(ctx context.Context, buf []byte, t restic.Fi
 	h := restic.Handle{Type: t, Name: id.String()}
 	success := false
 
-	for retry := 1; retry <= 5; retry++ {
+	for retry := 1; retry <= 3; retry++ {
 
 	        err := r.be.Load(ctx, h, 0, 0, func(rd io.Reader) error {
 	                // make sure this call is idempotent, in case an error occurs
