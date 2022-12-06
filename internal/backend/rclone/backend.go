@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -224,9 +223,6 @@ func newBackend(cfg Config, lim limiter.Limiter) (*Backend, error) {
 		Timeout:   60 * time.Second,
 	}
 
-	// request a random file which does not exist. we just want to test when
-	// rclone is able to accept HTTP requests.
-	//url := fmt.Sprintf("http://localhost/file-%d", rand.Uint64())
 	// request the /config file which will exist most of the time. we just want to test when
 	// rclone is able to accept HTTP requests. and not spam EOS MGM logs with file does not exist.
 	url := "http://localhost/config"
