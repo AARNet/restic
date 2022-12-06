@@ -7,7 +7,7 @@ RUN go run build.go
 # Get rclone
 FROM alpine:latest as rclone
 RUN apk add --no-cache curl unzip && \
-	curl -s -o /tmp/rclone.zip https://downloads.rclone.org/v1.57.0/rclone-v1.57.0-linux-amd64.zip && \
+	curl -s -o /tmp/rclone.zip https://downloads.rclone.org/v1.60.1/rclone-v1.60.1-linux-amd64.zip && \
 	unzip -o /tmp/rclone.zip && \
 	mv /rclone-*/rclone / && \
 	rm -rf /rclone-* /tmp/rclone.zip
