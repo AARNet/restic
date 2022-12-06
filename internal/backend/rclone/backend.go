@@ -226,7 +226,10 @@ func newBackend(cfg Config, lim limiter.Limiter) (*Backend, error) {
 
 	// request a random file which does not exist. we just want to test when
 	// rclone is able to accept HTTP requests.
-	url := fmt.Sprintf("http://localhost/file-%d", rand.Uint64())
+	//url := fmt.Sprintf("http://localhost/file-%d", rand.Uint64())
+	// request the /config file which will exist most of the time. we just want to test when
+	// rclone is able to accept HTTP requests. and not spam EOS MGM logs with file does not exist.
+	url := "http://localhost/config"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
