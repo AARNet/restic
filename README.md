@@ -15,8 +15,6 @@ This build includes:
 | -------- | -------- |
 | Restic Git | https://github.com/restic/restic/ |
 | Restic Documentation | https://restic.readthedocs.io/en/latest/ |
-
-
 | `--dry-run` source | https://github.com/beer4duke/restic/tree/b12db3c5180352bb3fe739059ddd6a4c32f0aab4 |
 | `--min-packsize` and `--file-read-concurrency` source | https://github.com/metalsp0rk/restic/commit/74d19cf2b8be9372860ea74b94be95b4f59e115a |
 
@@ -38,29 +36,29 @@ A new build of the restic docker image will be built from master when the restic
 If you need to manually build one, you can just run:
 
 
-docker build -t restic-build:v0.10.0 .
+`docker build -t restic-build:v0.10.0 .`
 
 
 #### Example running with S3
 
-
+```
 docker run -e AWS_ACCESS_KEY_ID=minioadmin \
 -e AWS_SECRET_ACCESS_KEY=minioadmin \
 -e RESTIC_PASSWORD=super_secret_repository_password \
 -e RESTIC_REPOSITORY=s3:https://minio.s3.aarnet.edu.au/test_restic_repo/ \
 -v `pwd`:/backup -v `pwd`/logs:/var/log/restic restic-build:v0.10.0
-
+```
 
 #### Example running with WebDAV
 
-
+```
 docker run -e RCLONE_WEBDAV_USER=webdav_user \
 -e RCLONE_WEBDAV_PASS=super_secret \
 -e RCLONE_WEBDAV_URL=https://cloudstor-uat.aarnet.edu.au/plus/remote.php/webdav \
 -e RESTIC_PASSWORD=super_secret_repository_password \
 -e RESTIC_REPOSITORY=rclone::webdav:/test_restic_repo \
 -v `pwd`:/backup -v `pwd`/logs:/var/log/restic restic-build:v0.10.0
-
+```
 
 ### Volumes
 
