@@ -1,5 +1,5 @@
 # Build restic
-FROM golang:1.15-alpine as build
+FROM golang:1.17-alpine as build
 ADD . /app
 WORKDIR /app
 RUN go run build.go
